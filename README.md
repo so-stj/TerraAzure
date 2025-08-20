@@ -57,7 +57,43 @@ az role assignment create \
   --scope /subscriptions/<subscription-id>
 ```
 
-### 3. GitHub リポジトリ設定
+### 3. OIDC認証設定
+
+#### Azure AD App Registration の作成
+```bash
+# Azure CLIでログイン
+az login
+
+# App Registration を作成
+az ad app create --display-name "GitHub Actions Terraform"
+
+# アプリケーションIDを取得
+APP_ID=$(az ad app list --display-name "GitHub Actions Terraform" --query "[].appId" -o tsv)
+echo "App ID: $APP_ID"
+
+# サービスプリンシパルを作成
+az ad sp create --id $APP_ID
+
+# サービスプリンシパルIDを取得
+SP_ID=$(az ad sp list --display-name "GitHub Actions Terraform" --query "[].id" -o tsv)
+echo "Service Principal ID: $SP_ID"
+```
+
+#### フェデレーション認証情報の設定
+```bash
+# GitHub Actions の OIDC トークン発行者を設定
+az ad app federated-credential create \
+  --id $APP_ID \
+  --parameters "{\"name\":\"github-actions\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:YOUR_GITHUB_USERNAME/YOUR_REPO_NAME:ref:refs/heads/main\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
+
+# リソースグループへの権限を付与
+az role assignment create \
+  --assignee $SP_ID \
+  --role "Contributor" \
+  --scope "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/YOUR_RESOURCE_GROUP_NAME"
+```
+
+### 4. GitHub リポジトリ設定
 リポジトリの Settings → Secrets and variables → Actions に以下を登録：
 
 **Secrets:**
@@ -76,7 +112,7 @@ az role assignment create \
 - `APP_SERVICE_SKU_SIZE`: App Service Plan SKU size (デフォルト: S1)
 - `APP_SERVICE_LINUX_FX_VERSION`: App Service Linux FX version (デフォルト: DOCKER|nginx:latest)
 
-### 4. Backend設定 (推奨)
+### 5. Backend設定 (推奨)
 リモートステートを Azure Storage に保存する場合：
 
 **Variables に追加:**
@@ -87,7 +123,7 @@ az role assignment create \
 
 ## ローカルでの使い方
 
-### 1. ローカル開発
+### 1. 認証設定
 ```bash
 # Azure CLIでログイン
 az login
@@ -108,7 +144,15 @@ terraform plan -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-### 2. GitHub Actions での自動化
+### 2. GitHub Actions での自動化 (OIDC認証)
+
+#### 認証方式: OpenID Connect (OIDC)
+- **セキュリティ**: 長期間有効なシークレットを使用せず、短時間のトークンで認証
+- **利点**: 
+  - シークレット管理が不要
+  - 自動的なトークン更新
+  - より高いセキュリティレベル
+- **設定**: Azure AD App Registration と GitHub Actions の連携
 
 #### Plan ワークフロー (`plan.yml`)
 - **トリガー**: プルリクエスト作成/更新時
