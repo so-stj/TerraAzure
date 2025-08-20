@@ -7,22 +7,6 @@ on:
     paths:
       - '**.tf'
       - '.github/workflows/plan.yml'
-  workflow_dispatch:
-    inputs:
-      resource_type:
-        description: 'Resource type to deploy'
-        required: true
-        default: 'vm'
-        type: choice
-        options:
-          - vm
-          - appservice
-          - both
-      target_branch:
-        description: 'Target branch for the plan'
-        required: false
-        default: 'main'
-        type: string
 
 permissions:
   id-token: write
@@ -32,10 +16,10 @@ permissions:
 env:
   TF_IN_AUTOMATION: true
   TF_INPUT: false
-  # Terraform variables. You can override defaults via Repository Variables or workflow inputs.
+  # Terraform variables. You can override defaults via Repository Variables.
   TF_VAR_prefix: ${{ vars.TF_VAR_PREFIX || 'tfvm' }}
   TF_VAR_location: ${{ vars.AZURE_LOCATION || 'japaneast' }}
-  TF_VAR_resource_type: ${{ github.event.inputs.resource_type || vars.RESOURCE_TYPE || 'vm' }}
+  TF_VAR_resource_type: ${{ vars.RESOURCE_TYPE || 'vm' }}
   TF_VAR_admin_username: ${{ vars.ADMIN_USERNAME || 'azureuser' }}
   TF_VAR_vm_size: ${{ vars.VM_SIZE || 'Standard_B2s' }}
   TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
@@ -122,13 +106,17 @@ jobs:
 
       - name: Read Plan and Post Comment
         uses: actions/github-script@v7
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
             
-            let output = '## Terraform Plan Results\n\n';
+            let output = '## 🔍 Terraform Plan Results\n\n';
+            
+            // Add PR info
+            output += `**PR**: #${context.issue.number} - ${context.payload.pull_request.title}\n`;
+            output += `**Branch**: \`${context.payload.pull_request.head.ref}\` → \`${context.payload.pull_request.base.ref}\`\n`;
+            output += `**Resource Type**: \`${{ env.TF_VAR_resource_type }}\`\n\n`;
             
             // Format check results
             const formatStatus = '${{ steps.format.outputs.format_status }}';
@@ -160,9 +148,16 @@ jobs:
             if (fs.existsSync('plan.txt')) {
               const plan = fs.readFileSync('plan.txt', 'utf8');
               if (plan.trim() !== '') {
-                output += '### Plan Output\n```diff\n' + plan + '\n```\n';
+                output += '### 📋 Plan Output\n```diff\n' + plan + '\n```\n';
               }
             }
+            
+            // Add deployment instructions
+            output += '\n---\n';
+            output += '### 🚀 Next Steps\n';
+            output += '1. Review the plan output above\n';
+            output += '2. If changes look good, merge this PR to trigger deployment\n';
+            output += '3. The apply workflow will run automatically on merge\n\n';
             
             // Find existing bot comment
             const { data: comments } = await github.rest.issues.listComments({
@@ -172,7 +167,7 @@ jobs:
             });
             
             const botComment = comments.find(comment => {
-              return comment.user.type === 'Bot' && comment.body.includes('## Terraform Plan Results');
+              return comment.user.type === 'Bot' && comment.body.includes('## 🔍 Terraform Plan Results');
             });
             
             if (botComment) {

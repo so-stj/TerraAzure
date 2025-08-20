@@ -7,40 +7,18 @@ on:
     paths:
       - '**.tf'
       - '.github/workflows/apply.yml'
-  workflow_dispatch:
-    inputs:
-      resource_type:
-        description: 'Resource type to deploy'
-        required: true
-        default: 'vm'
-        type: choice
-        options:
-          - vm
-          - appservice
-          - both
-      auto_approve:
-        description: 'Auto approve the apply'
-        required: true
-        default: true
-        type: boolean
-      force_apply:
-        description: 'Force apply without waiting for PR approval'
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   id-token: write
   contents: read
-  pull-requests: read
 
 env:
   TF_IN_AUTOMATION: true
   TF_INPUT: false
-  # Terraform variables. You can override defaults via Repository Variables or workflow inputs.
+  # Terraform variables. You can override defaults via Repository Variables.
   TF_VAR_prefix: ${{ vars.TF_VAR_PREFIX || 'tfvm' }}
   TF_VAR_location: ${{ vars.AZURE_LOCATION || 'japaneast' }}
-  TF_VAR_resource_type: ${{ github.event.inputs.resource_type || vars.RESOURCE_TYPE || 'vm' }}
+  TF_VAR_resource_type: ${{ vars.RESOURCE_TYPE || 'vm' }}
   TF_VAR_admin_username: ${{ vars.ADMIN_USERNAME || 'azureuser' }}
   TF_VAR_vm_size: ${{ vars.VM_SIZE || 'Standard_B2s' }}
   TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
@@ -59,8 +37,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -73,71 +49,6 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Check PR Status
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const COMMIT_MSG = '${{ github.event.head_commit.message }}';
-            console.log('Commit message:', COMMIT_MSG);
-            
-            // Check if this is a merge commit from a PR
-            if (COMMIT_MSG.includes('Merge pull request')) {
-              console.log('This is a merge commit from a PR');
-              
-              // Extract PR number from commit message
-              const prMatch = COMMIT_MSG.match(/#(\d+)/);
-              if (prMatch) {
-                const PR_NUMBER = prMatch[1];
-                console.log('PR Number:', PR_NUMBER);
-                
-                // Check PR status
-                try {
-                  const { data: pr } = await github.rest.pulls.get({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: PR_NUMBER
-                  });
-                  
-                  // Check if PR was merged
-                  if (pr.merged) {
-                    console.log('PR was merged successfully');
-                    
-                    // Check commit status
-                    const { data: statuses } = await github.rest.repos.listCommitStatusesForRef({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      ref: context.sha
-                    });
-                    
-                    const terraformStatus = statuses.find(status => 
-                      status.context === 'terraform/plan-status'
-                    );
-                    
-                    if (terraformStatus && terraformStatus.state === 'success') {
-                      console.log('✅ Terraform plan status is successful - proceeding with apply');
-                    } else {
-                      console.log('❌ Terraform plan status is not successful');
-                      core.setFailed('Terraform plan must be successful before apply');
-                    }
-                  } else {
-                    console.log('PR was not merged');
-                    core.setFailed('PR must be merged before apply');
-                  }
-                } catch (error) {
-                  console.log('Error checking PR status:', error.message);
-                  core.setFailed('Could not verify PR status');
-                }
-              } else {
-                console.log('Could not extract PR number from commit message');
-                core.setFailed('Could not extract PR number');
-              }
-            } else {
-              console.log('This is not a merge commit from a PR');
-              console.log('Apply will proceed for direct commits to main');
-            }
 
       - name: Terraform Init
         run: |
@@ -162,20 +73,6 @@ jobs:
 
       - name: Terraform Apply
         run: |
-          # 手動実行時の処理
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            if [ "${{ github.event.inputs.auto_approve }}" == "false" ]; then
-              echo "Manual approval required. Please review the plan and approve manually."
-              exit 1
-            fi
-            
-            if [ "${{ github.event.inputs.force_apply }}" == "true" ]; then
-              echo "Force apply enabled - proceeding without PR validation"
-            else
-              echo "Manual apply with PR validation"
-            fi
-          fi
-          
           # バックエンド使用時は同時書き込みを防止
           if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
             terraform apply -auto-approve tfplan -lock-timeout=5m

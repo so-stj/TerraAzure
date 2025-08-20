@@ -10,10 +10,8 @@
 - `modules/network/`: ネットワークリソースモジュール (VM用)
 - `modules/vm/`: 仮想マシンモジュール
 - `modules/appservice/`: App Serviceモジュール
-- `.github/workflows/plan.yml`: Plan ワークフロー (手動実行 + PR トリガー)
-- `.github/workflows/apply.yml`: Apply ワークフロー (main ブランチ トリガー + 手動実行)
-- `.github/workflows/pr-plan.yml`: PR専用 Plan ワークフロー (詳細なPRコメント)
-- `.github/workflows/pr-status-check.yml`: PRステータスチェックワークフロー
+- `.github/workflows/plan.yml`: Plan ワークフロー (PR トリガー)
+- `.github/workflows/apply.yml`: Apply ワークフロー (main ブランチ トリガー)
 
 ## モジュール構成
 ```
@@ -112,42 +110,63 @@ terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
 ### 2. GitHub Actions での自動化
 
-#### プルリクエストからの実行
-1. **新しいブランチを作成して変更をコミット**
-2. **プルリクエストを作成**
-3. **自動的に `terraform plan` が実行され、結果がPRにコメントされる**
-4. **フォーマットチェック、バリデーション、プランの結果が確認可能**
-5. **PRコメントには以下が表示されます**:
-   - PR番号とタイトル
-   - ブランチ情報
-   - リソースタイプ
-   - 各チェックの結果（絵文字付き）
-   - プランの詳細出力
-   - 次のステップの説明
+#### Plan ワークフロー (`plan.yml`)
+- **トリガー**: プルリクエスト作成/更新時
+- **実行内容**:
+  - フォーマットチェック (`terraform fmt -check`)
+  - バリデーション (`terraform validate`)
+  - プラン実行 (`terraform plan`)
+  - 結果をPRにコメント投稿
+- **PRコメント内容**:
+  - PR番号とタイトル
+  - ブランチ情報
+  - リソースタイプ
+  - 各チェックの結果（絵文字付き）
+  - プランの詳細出力
+  - 次のステップの説明
 
-#### 手動実行
-1. **GitHub Actions タブから手動実行**
-   - Plan ワークフロー: リソースタイプを選択して実行
-   - Apply ワークフロー: リソースタイプと自動承認設定を選択
-2. **実行結果の確認**
-   - Plan: 結果がPRにコメントされる
-   - Apply: 直接インフラに適用される
+#### Apply ワークフロー (`apply.yml`)
+- **トリガー**: mainブランチへのプッシュ時
+- **実行内容**:
+  - フォーマットチェック
+  - バリデーション
+  - プラン実行
+  - 自動適用 (`terraform apply`)
+- **セキュリティ**: バックエンド使用時はステートロック機能で同時書き込みを防止
 
-#### Apply ワークフロー
-1. **プルリクエストをmainブランチにマージ**
-2. **PRステータスチェックが成功していることを確認**
-3. **自動的に `terraform apply` が実行される**
-4. **インフラの変更が適用される**
+### 3. ローカルでのTerraform実行
 
-#### 手動実行のApply
-1. **GitHub Actions タブから手動実行**
-2. **パラメータ設定**:
-   - `resource_type`: デプロイするリソースタイプ
-   - `auto_approve`: 自動承認するかどうか
-   - `force_apply`: PR検証をスキップするかどうか
-3. **実行結果の確認**
+#### 基本的な実行手順（ローカルステート）
+```bash
+# 初期化
+terraform init
 
-### 3. プルリクエストの作成方法
+# プラン実行
+terraform plan -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
+
+# 適用
+terraform apply -auto-approve -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
+```
+
+#### バックエンド使用時の実行手順
+```bash
+# 初期化（バックエンド設定付き）
+terraform init \
+  -backend-config="resource_group_name=tfstate-rg" \
+  -backend-config="storage_account_name=tfstateaccount123" \
+  -backend-config="container_name=tfstate" \
+  -backend-config="key=terraform.tfstate"
+
+# プラン実行
+terraform plan -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
+
+# 適用
+terraform apply -auto-approve -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
+```
+
+**詳細なバックエンド設定手順は `backend-setup.md` を参照してください。**
+
+### 4. プルリクエストの作成方法
 
 #### 基本的な手順
 ```bash
@@ -188,7 +207,7 @@ git push origin feature/add-app-service
 Closes #XXX
 ```
 
-### 4. リソースタイプの選択
+### 5. リソースタイプの選択
 
 #### VM のみをデプロイ
 ```bash
@@ -217,14 +236,7 @@ terraform apply -var="resource_type=both"
 RESOURCE_TYPE=both
 ```
 
-### 3. Backend使用時
-```bash
-terraform init \
-  -backend-config="resource_group_name=tfstate-rg" \
-  -backend-config="storage_account_name=tfstateaccount123" \
-  -backend-config="container_name=tfstate" \
-  -backend-config="key=terraform.tfstate"
-```
+
 
 ## バージョニング管理
 
@@ -284,46 +296,8 @@ az storage container list --account-name <storage-account-name>
 - [Azure App Service Documentation](https://docs.microsoft.com/en-us/azure/app-service/)
 - [Terraform App Service Examples](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/app_service)
 
-## ワークフロー構成
 
-### Plan ワークフロー (`plan.yml`)
-- **トリガー**: プルリクエスト作成/更新時 + 手動実行
-- **実行内容**:
-  - フォーマットチェック (`terraform fmt -check`)
-  - バリデーション (`terraform validate`)
-  - プラン実行 (`terraform plan`)
-  - 結果をPRにコメント投稿
-- **手動実行**: リソースタイプを選択して実行可能
-- **権限**: `pull-requests: write` でPRコメント投稿が可能
-
-### PR専用 Plan ワークフロー (`pr-plan.yml`)
-- **トリガー**: プルリクエスト作成/更新時のみ
-- **実行内容**: Plan ワークフローと同じ + 詳細なPR情報表示
-- **特徴**: PR番号、ブランチ情報、リソースタイプを表示
-
-### Apply ワークフロー (`apply.yml`)
-- **トリガー**: mainブランチへのプッシュ時 + 手動実行
-- **実行内容**:
-  - PRステータスチェック（マージされたPRのplanが成功しているか確認）
-  - フォーマットチェック
-  - バリデーション
-  - プラン実行
-  - 自動適用 (`terraform apply`)
-- **手動実行**: リソースタイプ、自動承認設定、強制適用設定を選択可能
-- **セキュリティ**: バックエンド使用時はステートロック機能で同時書き込みを防止
-
-### PRステータスチェックワークフロー (`pr-status-check.yml`)
-- **トリガー**: プルリクエストの作成/更新時
-- **実行内容**:
-  - PRコメントからTerraform planの結果を確認
-  - コミットステータスを作成（成功/失敗/待機中）
-  - ApplyワークフローがPRの成功を確認できるようにする
 
 ## バージョン情報
 - **Terraform**: 1.9.0
 - **AzureRM Provider**: ~> 4.40.0
-- **GitHub Actions**: 
-  - actions/checkout@v4
-  - hashicorp/setup-terraform@v4
-  - azure/login@v3
-  - actions/github-script@v7
