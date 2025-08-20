@@ -1,0 +1,192 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**.tf'
+      - '.github/workflows/plan.yml'
+  workflow_dispatch:
+    inputs:
+      resource_type:
+        description: 'Resource type to deploy'
+        required: true
+        default: 'vm'
+        type: choice
+        options:
+          - vm
+          - appservice
+          - both
+      target_branch:
+        description: 'Target branch for the plan'
+        required: false
+        default: 'main'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: false
+  # Terraform variables. You can override defaults via Repository Variables or workflow inputs.
+  TF_VAR_prefix: ${{ vars.TF_VAR_PREFIX || 'tfvm' }}
+  TF_VAR_location: ${{ vars.AZURE_LOCATION || 'japaneast' }}
+  TF_VAR_resource_type: ${{ github.event.inputs.resource_type || vars.RESOURCE_TYPE || 'vm' }}
+  TF_VAR_admin_username: ${{ vars.ADMIN_USERNAME || 'azureuser' }}
+  TF_VAR_vm_size: ${{ vars.VM_SIZE || 'Standard_B2s' }}
+  TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+  TF_VAR_app_service_sku_tier: ${{ vars.APP_SERVICE_SKU_TIER || 'Standard' }}
+  TF_VAR_app_service_sku_size: ${{ vars.APP_SERVICE_SKU_SIZE || 'S1' }}
+  TF_VAR_app_service_linux_fx_version: ${{ vars.APP_SERVICE_LINUX_FX_VERSION || 'DOCKER|nginx:latest' }}
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.0
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        run: |
+          if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
+            terraform init -input=false \
+              -backend-config="resource_group_name=${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" \
+              -backend-config="storage_account_name=${{ vars.BACKEND_STORAGE_ACCOUNT_NAME }}" \
+              -backend-config="container_name=${{ vars.BACKEND_CONTAINER_NAME }}" \
+              -backend-config="key=${{ vars.BACKEND_KEY || 'terraform.tfstate' }}"
+          else
+            terraform init -input=false
+          fi
+
+      - name: Terraform Format Check
+        id: format
+        run: |
+          terraform fmt -check -recursive -no-color
+          echo "format_status=success" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Terraform Validate
+        id: validate
+        run: |
+          terraform validate -no-color
+          echo "validate_status=success" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Run terraform plan
+        id: plan
+        run: |
+          terraform plan -no-color -detailed-exitcode
+          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Reformat Plan
+        run: |
+          if [ -f plan.txt ]; then
+            rm plan.txt
+          fi
+          if [ "${{ steps.plan.outputs.stdout }}" != "" ]; then
+            echo '${{ steps.plan.outputs.stdout }}' | sed -E 's/^([[:space:]]+)([-+])/\2\1/g' > plan.txt
+          elif [ "${{ steps.plan.outputs.stderr }}" != "" ]; then
+            echo '${{ steps.plan.outputs.stderr }}' | sed -E 's/^([[:space:]]+)([-+])/\2\1/g' > plan.txt
+          fi
+
+      - name: Put Plan in Env Var
+        run: |
+          if [ -f plan.txt ]; then
+            PLAN=$(cat plan.txt)
+            echo "PLAN<<EOF" >> $GITHUB_ENV
+            echo "$PLAN" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          fi
+
+      - name: Read Plan and Post Comment
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            let output = '## Terraform Plan Results\n\n';
+            
+            // Format check results
+            const formatStatus = '${{ steps.format.outputs.format_status }}';
+            if (formatStatus === 'success') {
+              output += '✅ **Format Check**: Passed\n\n';
+            } else {
+              output += '❌ **Format Check**: Failed - Code formatting issues found\n\n';
+            }
+            
+            // Validation results
+            const validateStatus = '${{ steps.validate.outputs.validate_status }}';
+            if (validateStatus === 'success') {
+              output += '✅ **Validation**: Passed\n\n';
+            } else {
+              output += '❌ **Validation**: Failed - Configuration errors found\n\n';
+            }
+            
+            // Plan results
+            const planExitCode = '${{ steps.plan.outputs.plan_exit_code }}';
+            if (planExitCode === '0') {
+              output += '✅ **Plan**: No changes required\n\n';
+            } else if (planExitCode === '2') {
+              output += '📋 **Plan**: Changes detected\n\n';
+            } else {
+              output += '❌ **Plan**: Failed\n\n';
+            }
+            
+            // Add plan output if available
+            if (fs.existsSync('plan.txt')) {
+              const plan = fs.readFileSync('plan.txt', 'utf8');
+              if (plan.trim() !== '') {
+                output += '### Plan Output\n```diff\n' + plan + '\n```\n';
+              }
+            }
+            
+            // Find existing bot comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('## Terraform Plan Results');
+            });
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: output,
+              });
+            }

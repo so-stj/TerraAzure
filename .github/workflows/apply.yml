@@ -1,0 +1,103 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.tf'
+      - '.github/workflows/apply.yml'
+  workflow_dispatch:
+    inputs:
+      resource_type:
+        description: 'Resource type to deploy'
+        required: true
+        default: 'vm'
+        type: choice
+        options:
+          - vm
+          - appservice
+          - both
+      auto_approve:
+        description: 'Auto approve the apply'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: false
+  # Terraform variables. You can override defaults via Repository Variables or workflow inputs.
+  TF_VAR_prefix: ${{ vars.TF_VAR_PREFIX || 'tfvm' }}
+  TF_VAR_location: ${{ vars.AZURE_LOCATION || 'japaneast' }}
+  TF_VAR_resource_type: ${{ github.event.inputs.resource_type || vars.RESOURCE_TYPE || 'vm' }}
+  TF_VAR_admin_username: ${{ vars.ADMIN_USERNAME || 'azureuser' }}
+  TF_VAR_vm_size: ${{ vars.VM_SIZE || 'Standard_B2s' }}
+  TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+  TF_VAR_app_service_sku_tier: ${{ vars.APP_SERVICE_SKU_TIER || 'Standard' }}
+  TF_VAR_app_service_sku_size: ${{ vars.APP_SERVICE_SKU_SIZE || 'S1' }}
+  TF_VAR_app_service_linux_fx_version: ${{ vars.APP_SERVICE_LINUX_FX_VERSION || 'DOCKER|nginx:latest' }}
+
+jobs:
+  terraform-apply:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.0
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        run: |
+          if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
+            terraform init -input=false \
+              -backend-config="resource_group_name=${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" \
+              -backend-config="storage_account_name=${{ vars.BACKEND_STORAGE_ACCOUNT_NAME }}" \
+              -backend-config="container_name=${{ vars.BACKEND_CONTAINER_NAME }}" \
+              -backend-config="key=${{ vars.BACKEND_KEY || 'terraform.tfstate' }}"
+          else
+            terraform init -input=false
+          fi
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan -no-color
+
+      - name: Terraform Apply
+        run: |
+          # 手動実行時はauto_approveの設定を確認
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.auto_approve }}" == "false" ]; then
+            echo "Manual approval required. Please review the plan and approve manually."
+            exit 1
+          fi
+          
+          # バックエンド使用時は同時書き込みを防止
+          if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
+            terraform apply -auto-approve tfplan -lock-timeout=5m
+          else
+            terraform apply -auto-approve tfplan
+          fi
