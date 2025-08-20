@@ -13,6 +13,7 @@
 - `.github/workflows/plan.yml`: Plan ワークフロー (手動実行 + PR トリガー)
 - `.github/workflows/apply.yml`: Apply ワークフロー (main ブランチ トリガー + 手動実行)
 - `.github/workflows/pr-plan.yml`: PR専用 Plan ワークフロー (詳細なPRコメント)
+- `.github/workflows/pr-status-check.yml`: PRステータスチェックワークフロー
 
 ## モジュール構成
 ```
@@ -134,8 +135,17 @@ terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
 #### Apply ワークフロー
 1. **プルリクエストをmainブランチにマージ**
-2. **自動的に `terraform apply` が実行される**
-3. **インフラの変更が適用される**
+2. **PRステータスチェックが成功していることを確認**
+3. **自動的に `terraform apply` が実行される**
+4. **インフラの変更が適用される**
+
+#### 手動実行のApply
+1. **GitHub Actions タブから手動実行**
+2. **パラメータ設定**:
+   - `resource_type`: デプロイするリソースタイプ
+   - `auto_approve`: 自動承認するかどうか
+   - `force_apply`: PR検証をスキップするかどうか
+3. **実行結果の確認**
 
 ### 3. プルリクエストの作成方法
 
@@ -294,12 +304,20 @@ az storage container list --account-name <storage-account-name>
 ### Apply ワークフロー (`apply.yml`)
 - **トリガー**: mainブランチへのプッシュ時 + 手動実行
 - **実行内容**:
+  - PRステータスチェック（マージされたPRのplanが成功しているか確認）
   - フォーマットチェック
   - バリデーション
   - プラン実行
   - 自動適用 (`terraform apply`)
-- **手動実行**: リソースタイプと自動承認設定を選択可能
+- **手動実行**: リソースタイプ、自動承認設定、強制適用設定を選択可能
 - **セキュリティ**: バックエンド使用時はステートロック機能で同時書き込みを防止
+
+### PRステータスチェックワークフロー (`pr-status-check.yml`)
+- **トリガー**: プルリクエストの作成/更新時
+- **実行内容**:
+  - PRコメントからTerraform planの結果を確認
+  - コミットステータスを作成（成功/失敗/待機中）
+  - ApplyワークフローがPRの成功を確認できるようにする
 
 ## バージョン情報
 - **Terraform**: 1.9.0
