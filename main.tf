@@ -17,7 +17,7 @@ module "network" {
 
 # VM Module (only if resource_type is vm or both)
 module "vm" {
-  count  = contains(["vm", "both"], var.resource_type) ? 1 : 1
+  count  = contains(["vm", "both"], var.resource_type) ? 1 : 0
   source = "./modules/vm"
 
   prefix               = var.prefix
