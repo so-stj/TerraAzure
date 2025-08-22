@@ -77,17 +77,8 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan -no-color
-
       - name: Terraform Apply
-        run: |
-          # バックエンド使用時は同時書き込みを防止
-          if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
-            terraform apply -auto-approve tfplan -lock-timeout=5m
-          else
-            terraform apply -auto-approve tfplan
-          fi
+        run: terraform apply -auto-approve
 
       - name: Notify Staging Deployment Complete
         run: |
