@@ -93,28 +93,15 @@ jobs:
       - name: Run terraform plan
         id: plan
         run: |
-          terraform plan -no-color -detailed-exitcode
+          terraform plan -no-color -detailed-exitcode -out=plan.tfplan 2>&1 | tee plan_output.txt
           echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      - name: Reformat Plan
+      - name: Show Plan Output
         run: |
-          if [ -f plan.txt ]; then
-            rm plan.txt
-          fi
-          if [ "${{ steps.plan.outputs.stdout }}" != "" ]; then
-            echo '${{ steps.plan.outputs.stdout }}' | sed -E 's/^([[:space:]]+)([-+])/\2\1/g' > plan.txt
-          elif [ "${{ steps.plan.outputs.stderr }}" != "" ]; then
-            echo '${{ steps.plan.outputs.stderr }}' | sed -E 's/^([[:space:]]+)([-+])/\2\1/g' > plan.txt
-          fi
-
-      - name: Put Plan in Env Var
-        run: |
-          if [ -f plan.txt ]; then
-            PLAN=$(cat plan.txt)
-            echo "PLAN<<EOF" >> $GITHUB_ENV
-            echo "$PLAN" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
+          if [ -f plan_output.txt ]; then
+            echo "=== Terraform Plan Output ==="
+            cat plan_output.txt
           fi
 
       - name: Read Plan and Post Comment
@@ -171,10 +158,10 @@ jobs:
               output += '❌ **Plan**: Failed\n\n';
             }
             
-            if (fs.existsSync('plan.txt')) {
-              const plan = fs.readFileSync('plan.txt', 'utf8');
+            if (fs.existsSync('plan_output.txt')) {
+              const plan = fs.readFileSync('plan_output.txt', 'utf8');
               if (plan.trim() !== '') {
-                output += '### 📋 Plan Output\n```diff\n' + plan + '\n```\n';
+                output += '### 📋 Plan Output\n```\n' + plan + '\n```\n';
               }
             }
             
