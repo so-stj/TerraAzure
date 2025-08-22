@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - develop
-    types: [merged]
+    types: [closed]
     paths:
       - '**.tf'
 
@@ -32,6 +32,7 @@ jobs:
     name: Apply - Staging
     runs-on: ubuntu-latest
     environment: staging
+    if: github.event.pull_request.merged == true
     env:
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
