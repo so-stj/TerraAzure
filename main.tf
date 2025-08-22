@@ -5,7 +5,7 @@ resource "azurerm_resource_group" "rg" {
 
 # Network Module (only if VM is deployed)
 module "network" {
-  count  = contains(["vm", "both"], var.resource_type) ? 1 : 0
+  count  = contains(["vm", "both"], var.resource_type) ? 1 : 1
   source = "./modules/network"
 
   prefix              = var.prefix
@@ -17,7 +17,7 @@ module "network" {
 
 # VM Module (only if resource_type is vm or both)
 module "vm" {
-  count  = contains(["vm", "both"], var.resource_type) ? 1 : 0
+  count  = contains(["vm", "both"], var.resource_type) ? 1 : 1
   source = "./modules/vm"
 
   prefix                = var.prefix
