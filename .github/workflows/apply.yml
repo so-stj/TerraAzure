@@ -31,7 +31,6 @@ jobs:
   terraform-apply-staging:
     name: Apply - Staging
     runs-on: ubuntu-latest
-    environment: staging
     if: github.event.pull_request.merged == true
     env:
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
