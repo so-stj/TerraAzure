@@ -123,12 +123,20 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            const core = require('@actions/core');
             
             let output = '## 🔍 Terraform Plan Results\n\n';
             
-            // Add PR info
-            output += `**PR**: #${context.issue.number} - ${context.payload.pull_request.title}\n`;
-            output += `**Branch**: \`${context.payload.pull_request.head.ref}\` → \`${context.payload.pull_request.base.ref}\`\n`;
+            // Add PR info (handle workflow_dispatch)
+            if (context.payload.pull_request) {
+              output += `**PR**: #${context.issue.number} - ${context.payload.pull_request.title}\n`;
+              output += `**Branch**: \`${context.payload.pull_request.head.ref}\` → \`${context.payload.pull_request.base.ref}\`\n`;
+            } else if (github.event.workflow_run) {
+              output += `**Triggered by Workflow Run**: [${github.event.workflow_run.id}](${github.event.workflow_run.html_url})\n`;
+              output += `**Branch**: \`${github.event.workflow_run.head_branch}\`\n`;
+            } else if (github.event.ref) {
+              output += `**Ref**: \`${github.event.ref}\`\n`;
+            }
             output += `**Resource Type**: \`${{ env.TF_VAR_resource_type }}\`\n\n`;
             
             // Format check results
@@ -172,29 +180,36 @@ jobs:
             output += '2. If changes look good, merge this PR to trigger deployment\n';
             output += '3. The apply workflow will run automatically on merge\n\n';
             
-            // Find existing bot comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            
-            const botComment = comments.find(comment => {
-              return comment.user.type === 'Bot' && comment.body.includes('## 🔍 Terraform Plan Results');
-            });
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: output,
-              });
-            } else {
-              await github.rest.issues.createComment({
+            // Post comment only for pull_request events
+            if (context.payload.pull_request) {
+              // Find existing bot comment
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: output,
               });
+              
+              const botComment = comments.find(comment => {
+                return comment.user.type === 'Bot' && comment.body.includes('## 🔍 Terraform Plan Results');
+              });
+              
+              if (botComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: output,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: output,
+                });
+              }
+            } else {
+              // For workflow_dispatch, output to job summary
+              core.summary.addRaw(output);
+              core.summary.write();
             }
