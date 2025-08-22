@@ -79,7 +79,7 @@ jobs:
       - name: Terraform Format Check
         id: format
         run: |
-          terraform fmt -check -recursive -no-color
+          terraform fmt -check -recursive -no-color 
           echo "format_status=success" >> $GITHUB_OUTPUT
         continue-on-error: true
 
@@ -123,7 +123,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const core = require('@actions/core');
             
             let output = '## 🔍 Terraform Plan Results\n\n';
             
