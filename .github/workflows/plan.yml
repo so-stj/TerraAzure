@@ -130,12 +130,12 @@ jobs:
             if (context.payload.pull_request) {
               output += `**PR**: #${context.issue.number} - ${context.payload.pull_request.title}\n`;
               output += `**Branch**: \`${context.payload.pull_request.head.ref}\` → \`${context.payload.pull_request.base.ref}\`\n`;
-            } else if (github.event.client_payload && github.event.client_payload.pull_request) {
-              output += `**PR**: #${github.event.client_payload.pull_request.number} - ${github.event.client_payload.pull_request.title}\n`;
-              output += `**Branch**: \`${github.event.client_payload.pull_request.head.ref}\` → \`${github.event.client_payload.pull_request.base.ref}\`\n`;
             } else if (github.context.eventName === 'workflow_dispatch') {
               output += `**Trigger**: Manual Run by \`${github.actor}\`\n`;
               output += `**Branch**: \`${github.ref_name}\`\n`;
+            } else if (github.event.client_payload && github.event.client_payload.pull_request) {
+              output += `**PR**: #${github.event.client_payload.pull_request.number} - ${github.event.client_payload.pull_request.title}\n`;
+              output += `**Branch**: \`${github.event.client_payload.pull_request.head.ref}\` → \`${github.event.client_payload.pull_request.base.ref}\`\n`;
             } else if (github.event.ref) {
               output += `**Ref**: \`${github.event.ref}\`\n`;
             } else {
