@@ -209,6 +209,7 @@ jobs:
               }
             } else {
               // For workflow_dispatch, output to job summary
+              // core is available implicitly in github-script
               core.summary.addRaw(output);
               core.summary.write();
             }
