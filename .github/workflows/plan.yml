@@ -132,16 +132,14 @@ jobs:
             } else if (github.context.eventName === 'workflow_dispatch') {
               output += `**Trigger**: Manual Run by \`${github.actor}\`\n`;
               output += `**Branch**: \`${github.ref_name}\`\n`;
-            } else if (typeof github.event.workflow_run !== 'undefined') {
-              output += `**Triggered by Workflow Run**: [${github.event.workflow_run.id}](${github.event.workflow_run.html_url})\n`;
-              output += `**Branch**: \`${github.event.workflow_run.head_branch}\`\n`;
-            } else if (typeof github.event.client_payload !== 'undefined' && github.event.client_payload.pull_request) {
-              output += `**PR**: #${github.event.client_payload.pull_request.number} - ${github.event.client_payload.pull_request.title}\n`;
-              output += `**Branch**: \`${github.event.client_payload.pull_request.head.ref}\` → \`${github.event.client_payload.pull_request.base.ref}\`\n`;
-            } else if (github.event.ref) {
-              output += `**Ref**: \`${github.event.ref}\`\n`;
             } else {
               output += `**Event**: \`${github.context.eventName}\`\n`;
+              if (github.event.ref) {
+                output += `**Ref**: \`${github.event.ref}\`\n`;
+              }
+              if (github.actor) {
+                output += `**Actor**: \`${github.actor}\`\n`;
+              }
             }
             output += `**Resource Type**: \`${{ env.TF_VAR_resource_type }}\`\n\n`;
             
@@ -208,7 +206,6 @@ jobs:
                 });
               }
             } else {
-              // core is available implicitly in github-script
               core.summary.addRaw(output);
               core.summary.write();
             }
