@@ -126,13 +126,15 @@ jobs:
             
             let output = '## 🔍 Terraform Plan Results\n\n';
             
-            // Add event info (handle various event types)
             if (context.payload.pull_request) {
               output += `**PR**: #${context.issue.number} - ${context.payload.pull_request.title}\n`;
               output += `**Branch**: \`${context.payload.pull_request.head.ref}\` → \`${context.payload.pull_request.base.ref}\`\n`;
             } else if (github.context.eventName === 'workflow_dispatch') {
               output += `**Trigger**: Manual Run by \`${github.actor}\`\n`;
               output += `**Branch**: \`${github.ref_name}\`\n`;
+            } else if (github.event.workflow_run) {
+              output += `**Triggered by Workflow Run**: [${github.event.workflow_run.id}](${github.event.workflow_run.html_url})\n`;
+              output += `**Branch**: \`${github.event.workflow_run.head_branch}\`\n`;
             } else if (github.event.client_payload && github.event.client_payload.pull_request) {
               output += `**PR**: #${github.event.client_payload.pull_request.number} - ${github.event.client_payload.pull_request.title}\n`;
               output += `**Branch**: \`${github.event.client_payload.pull_request.head.ref}\` → \`${github.event.client_payload.pull_request.base.ref}\`\n`;
@@ -143,7 +145,6 @@ jobs:
             }
             output += `**Resource Type**: \`${{ env.TF_VAR_resource_type }}\`\n\n`;
             
-            // Format check results
             const formatStatus = '${{ steps.format.outputs.format_status }}';
             if (formatStatus === 'success') {
               output += '✅ **Format Check**: Passed\n\n';
@@ -151,7 +152,6 @@ jobs:
               output += '❌ **Format Check**: Failed - Code formatting issues found\n\n';
             }
             
-            // Validation results
             const validateStatus = '${{ steps.validate.outputs.validate_status }}';
             if (validateStatus === 'success') {
               output += '✅ **Validation**: Passed\n\n';
@@ -159,7 +159,6 @@ jobs:
               output += '❌ **Validation**: Failed - Configuration errors found\n\n';
             }
             
-            // Plan results
             const planExitCode = '${{ steps.plan.outputs.plan_exit_code }}';
             if (planExitCode === '0') {
               output += '✅ **Plan**: No changes required\n\n';
@@ -169,7 +168,6 @@ jobs:
               output += '❌ **Plan**: Failed\n\n';
             }
             
-            // Add plan output if available
             if (fs.existsSync('plan.txt')) {
               const plan = fs.readFileSync('plan.txt', 'utf8');
               if (plan.trim() !== '') {
@@ -177,16 +175,13 @@ jobs:
               }
             }
             
-            // Add deployment instructions
             output += '\n---\n';
             output += '### 🚀 Next Steps\n';
             output += '1. Review the plan output above\n';
             output += '2. If changes look good, merge this PR to trigger deployment\n';
             output += '3. The apply workflow will run automatically on merge\n\n';
             
-            // Post comment only for pull_request events
             if (context.payload.pull_request) {
-              // Find existing bot comment
               const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -213,7 +208,6 @@ jobs:
                 });
               }
             } else {
-              // For workflow_dispatch, output to job summary
               // core is available implicitly in github-script
               core.summary.addRaw(output);
               core.summary.write();
