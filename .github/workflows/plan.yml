@@ -54,13 +54,6 @@ jobs:
           enable-AzPSSession: true
           use-oidc: true
 
-      - name: Azure CLI script
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            az account show
-
       - name: Terraform Init
         run: |
           RESOURCE_GROUP_NAME="${{ github.event.inputs.backend_resource_group_name || vars.BACKEND_RESOURCE_GROUP_NAME }}"
