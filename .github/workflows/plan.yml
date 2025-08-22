@@ -8,23 +8,6 @@ on:
       - '**.tf'
       - '.github/workflows/plan.yml'
   workflow_dispatch:
-    inputs:
-      backend_resource_group_name:
-        description: 'Azure Resource Group name for Terraform state'
-        required: false
-        default: ${{ vars.BACKEND_RESOURCE_GROUP_NAME }}
-      backend_storage_account_name:
-        description: 'Azure Storage Account name for Terraform state'
-        required: false
-        default: ${{ vars.BACKEND_STORAGE_ACCOUNT_NAME }}
-      backend_container_name:
-        description: 'Azure Blob Container name for Terraform state'
-        required: false
-        default: ${{ vars.BACKEND_CONTAINER_NAME }}
-      backend_key:
-        description: 'Terraform state file key (path within container)'
-        required: false
-        default: ${{ vars.BACKEND_KEY || 'terraform.tfstate' }}
 
 permissions:
   id-token: write
