@@ -20,13 +20,13 @@ module "vm" {
   count  = contains(["vm", "both"], var.resource_type) ? 1 : 0
   source = "./modules/vm"
 
-  prefix                = var.prefix
-  location              = var.location
-  resource_group_name   = azurerm_resource_group.rg.name
-  admin_username        = var.admin_username
-  ssh_public_key        = var.ssh_public_key
-  vm_size               = var.vm_size
-  network_interface_id  = module.network[0].network_interface_id
+  prefix               = var.prefix
+  location             = var.location
+  resource_group_name  = azurerm_resource_group.rg.name
+  admin_username       = var.admin_username
+  ssh_public_key       = var.ssh_public_key
+  vm_size              = var.vm_size
+  network_interface_id = module.network[0].network_interface_id
 }
 
 # App Service Module (only if resource_type is appservice or both)

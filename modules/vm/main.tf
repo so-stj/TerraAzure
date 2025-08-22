@@ -1,9 +1,9 @@
 resource "azurerm_linux_virtual_machine" "vm" {
-  name                = "${var.prefix}-vm"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  size                = var.vm_size
-  admin_username      = var.admin_username
+  name                  = "${var.prefix}-vm"
+  resource_group_name   = var.resource_group_name
+  location              = var.location
+  size                  = var.vm_size
+  admin_username        = var.admin_username
   network_interface_ids = [var.network_interface_id]
 
   admin_ssh_key {
