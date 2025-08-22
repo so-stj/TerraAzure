@@ -1,0 +1,182 @@
+name: Manage Staging Environment
+
+on:
+  schedule:
+    # 平日の朝8時に開始、夜8時に停止
+    - cron: '0 8 * * 1-5'  # 平日朝8時
+    - cron: '0 20 * * 1-5' # 平日夜8時
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'stop'
+        type: choice
+        options:
+          - start
+          - stop
+          - destroy
+      confirm_destroy:
+        description: 'Confirm staging environment destruction (required for destroy action)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  manage-staging-resources:
+    name: Manage Staging Resources
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: true
+    steps:
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          use-oidc: true
+
+      - name: Determine Action
+        id: action
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # スケジュール実行の場合、時間で判断
+            HOUR=$(date +%H)
+            if [ "$HOUR" = "08" ]; then
+              echo "action=start" >> $GITHUB_OUTPUT
+              echo "Starting staging environment (scheduled)"
+            else
+              echo "action=stop" >> $GITHUB_OUTPUT
+              echo "Stopping staging environment (scheduled)"
+            fi
+          else
+            # 手動実行の場合
+            echo "action=${{ github.event.inputs.action }}" >> $GITHUB_OUTPUT
+            echo "Manual action: ${{ github.event.inputs.action }}"
+            
+            # destroyアクションの場合は確認が必要
+            if [ "${{ github.event.inputs.action }}" = "destroy" ] && [ "${{ github.event.inputs.confirm_destroy }}" != "true" ]; then
+              echo "❌ Destroy action requires confirmation"
+              echo "Please set 'Confirm staging environment destruction' to true"
+              exit 1
+            fi
+          fi
+
+      - name: Start Staging Resources
+        if: steps.action.outputs.action == 'start'
+        run: |
+          echo "Starting staging environment..."
+          
+          # VMを開始
+          az vm start --resource-group stg-myproject-rg --name stg-myproject-vm || echo "VM not found or already running"
+          
+          # App Serviceを開始
+          az appservice plan start --name stg-myproject-plan --resource-group stg-myproject-rg || echo "App Service Plan not found or already running"
+          
+          echo "✅ Staging environment started successfully"
+
+      - name: Stop Staging Resources
+        if: steps.action.outputs.action == 'stop'
+        run: |
+          echo "Stopping staging environment..."
+          
+          # VMを停止
+          az vm deallocate --resource-group stg-myproject-rg --name stg-myproject-vm || echo "VM not found or already stopped"
+          
+          # App Serviceを停止
+          az appservice plan stop --name stg-myproject-plan --resource-group stg-myproject-rg || echo "App Service Plan not found or already stopped"
+          
+          echo "✅ Staging environment stopped successfully"
+
+      - name: Setup Terraform
+        if: steps.action.outputs.action == 'destroy'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Checkout repository
+        if: steps.action.outputs.action == 'destroy'
+        uses: actions/checkout@v4
+
+      - name: Destroy Staging Resources
+        if: steps.action.outputs.action == 'destroy'
+        run: |
+          echo "Destroying staging environment..."
+          
+          # Terraformでステージング環境を削除
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" \
+            -backend-config="storage_account_name=${{ vars.BACKEND_STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="container_name=${{ vars.BACKEND_CONTAINER_NAME }}" \
+            -backend-config="key=staging/terraform.tfstate"
+          
+          # ステージング環境の変数を設定
+          export TF_VAR_prefix="stg"
+          export TF_VAR_location="${{ vars.AZURE_LOCATION || 'japaneast' }}"
+          export TF_VAR_resource_type="${{ vars.RESOURCE_TYPE || 'vm' }}"
+          export TF_VAR_admin_username="${{ vars.ADMIN_USERNAME || 'azureuser' }}"
+          export TF_VAR_vm_size="${{ vars.VM_SIZE || 'Standard_B2s' }}"
+          export TF_VAR_ssh_public_key="${{ secrets.SSH_PUBLIC_KEY }}"
+          export TF_VAR_app_service_sku_tier="${{ vars.APP_SERVICE_SKU_TIER || 'Standard' }}"
+          export TF_VAR_app_service_sku_size="${{ vars.APP_SERVICE_SKU_SIZE || 'S1' }}"
+          export TF_VAR_app_service_linux_fx_version="${{ vars.APP_SERVICE_LINUX_FX_VERSION || 'DOCKER|nginx:latest' }}"
+          
+          # ステージング環境を削除
+          terraform destroy -auto-approve -target=module.vm -target=module.appservice
+          
+          echo "✅ Staging environment destroyed successfully"
+
+      - name: Notify Status
+        run: |
+          ACTION="${{ steps.action.outputs.action }}"
+          if [ "$ACTION" = "start" ]; then
+            echo "## 🟢 Staging Environment Started"
+            echo "**Time**: $(date)"
+            echo "**Action**: Automated start"
+            echo ""
+            echo "### 📋 Available Resources"
+            echo "- VM: stg-myproject-vm"
+            echo "- App Service: stg-myproject-app"
+            echo ""
+            echo "### 🔗 Access URLs"
+            echo "- VM SSH: ssh azureuser@[VM_IP]"
+            echo "- App Service: https://stg-myproject-app.azurewebsites.net"
+          elif [ "$ACTION" = "stop" ]; then
+            echo "## 🔴 Staging Environment Stopped"
+            echo "**Time**: $(date)"
+            echo "**Action**: Automated stop"
+            echo ""
+            echo "### 💰 Cost Savings"
+            echo "Staging environment has been stopped to reduce costs."
+            echo "Resources will be automatically started tomorrow at 8:00 AM."
+          elif [ "$ACTION" = "destroy" ]; then
+            echo "## 🗑️ Staging Environment Destroyed"
+            echo "**Time**: $(date)"
+            echo "**Action**: Manual destruction"
+            echo "**Destroyed by**: ${{ github.actor }}"
+            echo ""
+            echo "### 💰 Cost Savings"
+            echo "Staging environment has been completely destroyed."
+            echo "All resources have been removed from Azure."
+            echo ""
+            echo "### ⚠️ Important Notes"
+            echo "- All staging data has been permanently deleted"
+            echo "- To recreate staging environment, run the staging deployment workflow"
+            echo "- This action cannot be undone"
+            echo ""
+            echo "### 🔄 Recreate Staging Environment"
+            echo "To recreate the staging environment:"
+            echo "1. Go to Actions tab"
+            echo "2. Select 'Terraform Apply' workflow"
+            echo "3. Click 'Run workflow'"
+            echo "4. This will deploy to staging environment"
+          fi

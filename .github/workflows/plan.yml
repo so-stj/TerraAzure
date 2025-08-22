@@ -17,7 +17,7 @@ permissions:
 env:
   TF_IN_AUTOMATION: true
   TF_INPUT: false
-  # Terraform variables. You can override defaults via Repository Variables.
+  # Terraform variables. Environment-specific variables will override these defaults.
   TF_VAR_prefix: ${{ vars.TF_VAR_PREFIX || 'tfvm' }}
   TF_VAR_location: ${{ vars.AZURE_LOCATION || 'japaneast' }}
   TF_VAR_resource_type: ${{ vars.RESOURCE_TYPE || 'vm' }}
@@ -29,8 +29,10 @@ env:
   TF_VAR_app_service_linux_fx_version: ${{ vars.APP_SERVICE_LINUX_FX_VERSION || 'DOCKER|nginx:latest' }}
 
 jobs:
-  terraform-plan:
+  terraform-plan-staging:
+    name: Plan - Staging
     runs-on: ubuntu-latest
+    environment: staging
     env:
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -100,7 +102,7 @@ jobs:
       - name: Show Plan Output
         run: |
           if [ -f plan_output.txt ]; then
-            echo "=== Terraform Plan Output ==="
+            echo "=== Terraform Plan Output (Staging) ==="
             cat plan_output.txt
           fi
 
@@ -111,7 +113,7 @@ jobs:
           script: |
             const fs = require('fs');
             
-            let output = '## 🔍 Terraform Plan Results\n\n';
+            let output = '## 🔍 Terraform Plan Results - Staging Environment\n\n';
             
             if (context.payload.pull_request) {
               output += `**PR**: #${context.issue.number} - ${context.payload.pull_request.title}\n`;
@@ -133,6 +135,7 @@ jobs:
                 output += `**Actor**: \`${context.actor}\`\n`;
               }
             }
+            output += `**Environment**: \`staging\`\n`;
             output += `**Resource Type**: \`${{ env.TF_VAR_resource_type }}\`\n\n`;
             
             const formatStatus = '${{ steps.format.outputs.format_status }}';
@@ -168,8 +171,8 @@ jobs:
             output += '\n---\n';
             output += '### 🚀 Next Steps\n';
             output += '1. Review the plan output above\n';
-            output += '2. If changes look good, merge this PR to trigger deployment\n';
-            output += '3. The apply workflow will run automatically on merge\n\n';
+            output += '2. If changes look good, merge this PR to trigger deployment to staging\n';
+            output += '3. After staging deployment is successful, create a production deployment PR\n\n';
             
             if (context.payload.pull_request) {
               const { data: comments } = await github.rest.issues.listComments({
@@ -179,7 +182,7 @@ jobs:
               });
               
               const botComment = comments.find(comment => {
-                return comment.user.type === 'Bot' && comment.body.includes('## 🔍 Terraform Plan Results');
+                return comment.user.type === 'Bot' && comment.body.includes('## 🔍 Terraform Plan Results - Staging Environment');
               });
               
               if (botComment) {

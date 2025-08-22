@@ -15,7 +15,7 @@ permissions:
 env:
   TF_IN_AUTOMATION: true
   TF_INPUT: false
-  # Terraform variables. You can override defaults via Repository Variables.
+  # Terraform variables. Environment-specific variables will override these defaults.
   TF_VAR_prefix: ${{ vars.TF_VAR_PREFIX || 'tfvm' }}
   TF_VAR_location: ${{ vars.AZURE_LOCATION || 'japaneast' }}
   TF_VAR_resource_type: ${{ vars.RESOURCE_TYPE || 'vm' }}
@@ -27,8 +27,10 @@ env:
   TF_VAR_app_service_linux_fx_version: ${{ vars.APP_SERVICE_LINUX_FX_VERSION || 'DOCKER|nginx:latest' }}
 
 jobs:
-  terraform-apply:
+  terraform-apply-staging:
+    name: Apply - Staging
     runs-on: ubuntu-latest
+    environment: staging
     env:
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -85,3 +87,47 @@ jobs:
           else
             terraform apply -auto-approve tfplan
           fi
+
+      - name: Notify Staging Deployment Complete
+        run: |
+          echo "## ✅ Staging Deployment Complete"
+          echo "**Environment**: Staging"
+          echo "**Resources**: Deployed successfully"
+          echo "**Deployed by**: ${{ github.actor }}"
+          echo "**Deployment time**: $(date)"
+          echo ""
+          echo "### 🚀 Next Steps"
+          echo "1. Verify staging environment is working correctly"
+          echo "2. Run tests on staging environment"
+          echo "3. If everything looks good, proceed to production deployment"
+          echo ""
+          echo "### 📋 Production Deployment"
+          echo "To deploy to production:"
+          echo "1. Go to Actions tab"
+          echo "2. Select 'Terraform Apply - Production' workflow"
+          echo "3. Click 'Run workflow'"
+          echo "4. Set 'Confirm production deployment' to true"
+          echo "5. Click 'Run workflow' to start production deployment"
+
+      - name: Create Production Deployment Summary
+        run: |
+          echo "## 🚀 Production Deployment Ready"
+          echo ""
+          echo "### 📋 Next Steps for Production Deployment"
+          echo "1. **Verify staging environment is working correctly**"
+          echo "2. **Run tests on staging environment**"
+          echo "3. **If everything looks good, proceed to production deployment**"
+          echo ""
+          echo "### 📊 Production Deployment Workflow"
+          echo "To deploy to production:"
+          echo "1. Go to Actions tab"
+          echo "2. Select 'Terraform Apply - Production' workflow"
+          echo "3. Click 'Run workflow'"
+          echo "4. Set 'Confirm production deployment' to true"
+          echo "5. Click 'Run workflow' to start production deployment"
+          echo ""
+          echo "### ⚠️ Important Notes"
+          echo "- This is a **PRODUCTION** deployment"
+          echo "- Please review carefully before proceeding"
+          echo "- Monitor the deployment closely"
+          echo "- Have rollback plan ready"

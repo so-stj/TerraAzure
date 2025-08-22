@@ -1,0 +1,277 @@
+name: Terraform Apply - Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: 'Confirm production deployment'
+        required: true
+        default: false
+        type: boolean
+      staging_verified:
+        description: 'Staging environment has been verified and tested'
+        required: true
+        default: false
+        type: boolean
+      deployment_reason:
+        description: 'Reason for production deployment'
+        required: true
+        default: 'Staging deployment completed successfully'
+        type: string
+  repository_dispatch:
+    types: [production-deployment]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: false
+  # Production-specific variables
+  TF_VAR_prefix: ${{ vars.TF_VAR_PREFIX || 'prod' }}
+  TF_VAR_location: ${{ vars.AZURE_LOCATION || 'japaneast' }}
+  TF_VAR_resource_type: ${{ vars.RESOURCE_TYPE || 'both' }}
+  TF_VAR_admin_username: ${{ vars.ADMIN_USERNAME || 'azureuser' }}
+  TF_VAR_vm_size: ${{ vars.VM_SIZE || 'Standard_B4ms' }}
+  TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+  TF_VAR_app_service_sku_tier: ${{ vars.APP_SERVICE_SKU_TIER || 'Premium' }}
+  TF_VAR_app_service_sku_size: ${{ vars.APP_SERVICE_SKU_SIZE || 'P1v2' }}
+  TF_VAR_app_service_linux_fx_version: ${{ vars.APP_SERVICE_LINUX_FX_VERSION || 'DOCKER|nginx:latest' }}
+
+jobs:
+  pre-deployment-checks:
+    name: Pre-Deployment Checks
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      deployment_approved: ${{ steps.check-approval.outputs.approved }}
+    steps:
+      - name: Check Deployment Approval
+        id: check-approval
+        run: |
+          if [ "${{ github.event.inputs.confirm_production }}" = "true" ] && [ "${{ github.event.inputs.staging_verified }}" = "true" ]; then
+            echo "approved=true" >> $GITHUB_OUTPUT
+            echo "✅ Production deployment approved"
+            echo "Deployment reason: ${{ github.event.inputs.deployment_reason }}"
+          else
+            echo "approved=false" >> $GITHUB_OUTPUT
+            echo "❌ Production deployment not approved"
+            echo "Please ensure both confirm_production and staging_verified are set to true"
+            exit 1
+          fi
+
+      - name: Display Deployment Information
+        run: |
+          echo "## 🚀 Production Deployment Information"
+          echo ""
+          echo "**Deployment Requested by**: ${{ github.actor }}"
+          echo "**Deployment Time**: $(date)"
+          echo "**Deployment Reason**: ${{ github.event.inputs.deployment_reason }}"
+          echo "**Staging Verified**: ${{ github.event.inputs.staging_verified }}"
+          echo "**Production Confirmed**: ${{ github.event.inputs.confirm_production }}"
+          echo ""
+          echo "### 📋 Pre-Deployment Checklist"
+          echo "- [x] Staging deployment completed successfully"
+          echo "- [x] Staging environment verified and tested"
+          echo "- [x] Production deployment confirmed"
+          echo "- [x] Deployment reason provided"
+          echo ""
+          echo "### ⚠️ Production Deployment Warning"
+          echo "This will deploy changes to the **PRODUCTION** environment."
+          echo "Please ensure all checks have passed before proceeding."
+
+  terraform-plan-production:
+    name: Plan - Production
+    runs-on: ubuntu-latest
+    environment: production
+    needs: pre-deployment-checks
+    if: needs.pre-deployment-checks.outputs.deployment_approved == 'true'
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: true
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          use-oidc: true
+
+      - name: Terraform Init
+        run: |
+          if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
+            terraform init -input=false \
+              -backend-config="resource_group_name=${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" \
+              -backend-config="storage_account_name=${{ vars.BACKEND_STORAGE_ACCOUNT_NAME }}" \
+              -backend-config="container_name=${{ vars.BACKEND_CONTAINER_NAME }}" \
+              -backend-config="key=${{ vars.BACKEND_KEY || 'terraform.tfstate' }}"
+          else
+            terraform init -input=false
+          fi
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Run terraform plan
+        id: plan
+        run: |
+          terraform plan -no-color -detailed-exitcode -out=plan.tfplan 2>&1 | tee plan_output.txt
+          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Show Plan Output
+        run: |
+          if [ -f plan_output.txt ]; then
+            echo "=== Terraform Plan Output (Production) ==="
+            cat plan_output.txt
+          fi
+
+      - name: Create Production Deployment Summary
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            let output = '## 🔍 Terraform Plan Results - Production Environment\n\n';
+            
+            output += `**Trigger**: Manual Production Deployment by \`${context.actor}\`\n`;
+            output += `**Environment**: \`production\`\n`;
+            output += `**Resource Type**: \`${{ env.TF_VAR_resource_type }}\`\n`;
+            output += `**Deployment Reason**: \`${{ github.event.inputs.deployment_reason }}\`\n\n`;
+            
+            const planExitCode = '${{ steps.plan.outputs.plan_exit_code }}';
+            if (planExitCode === '0') {
+              output += '✅ **Plan**: No changes required\n\n';
+            } else if (planExitCode === '2') {
+              output += '📋 **Plan**: Changes detected\n\n';
+            } else {
+              output += '❌ **Plan**: Failed\n\n';
+            }
+            
+            if (fs.existsSync('plan_output.txt')) {
+              const plan = fs.readFileSync('plan_output.txt', 'utf8');
+              if (plan.trim() !== '') {
+                output += '### 📋 Plan Output\n```\n' + plan + '\n```\n';
+              }
+            }
+            
+            output += '\n---\n';
+            output += '### ⚠️ Production Deployment Warning\n';
+            output += 'This will deploy changes to the **PRODUCTION** environment.\n';
+            output += 'Please review the plan output carefully before proceeding.\n\n';
+            
+            output += '### 🚀 Next Steps\n';
+            output += '1. Review the plan output above\n';
+            output += '2. If changes look correct, proceed to apply\n';
+            output += '3. Monitor the deployment closely\n\n';
+            
+            core.summary.addRaw(output);
+            core.summary.write();
+
+  terraform-apply-production:
+    name: Apply - Production
+    runs-on: ubuntu-latest
+    environment: production
+    needs: [pre-deployment-checks, terraform-plan-production]
+    if: needs.pre-deployment-checks.outputs.deployment_approved == 'true' && (needs.terraform-plan-production.outputs.plan_exit_code == '2' || needs.terraform-plan-production.outputs.plan_exit_code == '0')
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: true
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          use-oidc: true
+
+      - name: Terraform Init
+        run: |
+          if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
+            terraform init -input=false \
+              -backend-config="resource_group_name=${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" \
+              -backend-config="storage_account_name=${{ vars.BACKEND_STORAGE_ACCOUNT_NAME }}" \
+              -backend-config="container_name=${{ vars.BACKEND_CONTAINER_NAME }}" \
+              -backend-config="key=${{ vars.BACKEND_KEY || 'terraform.tfstate' }}"
+          else
+            terraform init -input=false
+          fi
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan -no-color
+
+      - name: Terraform Apply
+        run: |
+          # バックエンド使用時は同時書き込みを防止
+          if [ -n "${{ vars.BACKEND_RESOURCE_GROUP_NAME }}" ]; then
+            terraform apply -auto-approve tfplan -lock-timeout=5m
+          else
+            terraform apply -auto-approve tfplan
+          fi
+
+      - name: Notify Production Deployment Complete
+        run: |
+          echo "## ✅ Production Deployment Complete"
+          echo "**Environment**: Production"
+          echo "**Resources**: Deployed successfully"
+          echo "**Deployed by**: ${{ github.actor }}"
+          echo "**Deployment time**: $(date)"
+          echo "**Deployment reason**: ${{ github.event.inputs.deployment_reason }}"
+          echo ""
+          echo "### 🔍 Post-Deployment Checklist"
+          echo "1. Verify all resources are running correctly"
+          echo "2. Check application health and performance"
+          echo "3. Monitor logs for any errors"
+          echo "4. Update deployment documentation"
+          echo ""
+          echo "### 📊 Monitoring"
+          echo "- Azure Portal: Monitor resource health"
+          echo "- Application logs: Check for errors"
+          echo "- Performance metrics: Monitor response times"
+          echo ""
+          echo "### 🎉 Deployment Success"
+          echo "Production deployment completed successfully!"
+          echo "All changes have been applied to the production environment."

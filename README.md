@@ -1,6 +1,6 @@
-# Terraform + GitHub Actions for Azure VM (モジュール化 + OIDC)
+# Terraform + GitHub Actions for Azure VM (モジュール化 + OIDC + 環境分離)
 
-このリポジトリは、Terraform と GitHub Actions を使用して Azure の仮想マシン (Ubuntu 22.04 LTS) を自動デプロイするモジュール化された構成です。
+このリポジトリは、Terraform と GitHub Actions を使用して Azure の仮想マシン (Ubuntu 22.04 LTS) を自動デプロイするモジュール化された構成です。**ステージングから本番環境への分離**に対応しており、安全で段階的なデプロイメントを実現します。
 
 ## 構成
 - `providers.tf`: Provider と Backend 設定
@@ -10,8 +10,31 @@
 - `modules/network/`: ネットワークリソースモジュール (VM用)
 - `modules/vm/`: 仮想マシンモジュール
 - `modules/appservice/`: App Serviceモジュール
-- `.github/workflows/plan.yml`: Plan ワークフロー (PR トリガー)
-- `.github/workflows/apply.yml`: Apply ワークフロー (main ブランチ トリガー)
+- `.github/workflows/plan.yml`: Plan ワークフロー (ステージング環境)
+- `.github/workflows/apply.yml`: Apply ワークフロー (ステージング環境)
+- `.github/workflows/apply-production.yml`: Apply ワークフロー (本番環境)
+- `.github/workflows/manage-staging.yml`: ステージング環境管理ワークフロー (開始/停止/削除)
+
+## 環境分離アーキテクチャ
+
+### 対応環境
+- **Staging**: ステージング環境（本番相当のテスト）
+- **Production**: 本番環境（本格運用）
+
+### ワークフロー構成
+```
+PR作成 → Plan (Staging) → レビュー → マージ → Apply (Staging) → テスト → 本番デプロイ
+```
+
+### デプロイメントフロー
+```
+1. 開発者 → フィーチャーブランチ作成 → コード変更
+2. PR作成 → 自動的にステージング環境でPlan実行
+3. レビュー → 承認 → マージ
+4. 自動的にステージング環境でApply実行
+5. ステージング環境でテスト
+6. 本番環境への手動デプロイ（承認プロセス付き）
+```
 
 ## モジュール構成
 ```
@@ -94,6 +117,14 @@ az role assignment create \
 ```
 
 ### 4. GitHub リポジトリ設定
+
+#### 4.1. 環境の作成
+1. GitHubリポジトリの `Settings` → `Environments` に移動
+2. `New environment` で以下の環境を作成：
+   - `staging`
+   - `production`
+
+#### 4.2. Secrets設定
 リポジトリの Settings → Secrets and variables → Actions に以下を登録：
 
 **Secrets:**
@@ -102,24 +133,60 @@ az role assignment create \
 - `AZURE_SUBSCRIPTION_ID`: Azure サブスクリプションID
 - `SSH_PUBLIC_KEY`: VMに登録するSSH公開鍵
 
-**Variables (任意):**
-- `RESOURCE_TYPE`: デプロイするリソースタイプ (vm, appservice, both) (デフォルト: vm)
-- `AZURE_LOCATION`: Azureリージョン (デフォルト: japaneast)
-- `ADMIN_USERNAME`: VM管理者ユーザー名 (デフォルト: azureuser)
-- `VM_SIZE`: VMサイズ (デフォルト: Standard_B2s)
-- `TF_VAR_PREFIX`: リソース名プレフィックス (デフォルト: tfvm)
-- `APP_SERVICE_SKU_TIER`: App Service Plan SKU tier (デフォルト: Standard)
-- `APP_SERVICE_SKU_SIZE`: App Service Plan SKU size (デフォルト: S1)
-- `APP_SERVICE_LINUX_FX_VERSION`: App Service Linux FX version (デフォルト: DOCKER|nginx:latest)
+#### 4.3. Environment Variables設定
+
+**Staging環境:**
+```
+TF_VAR_PREFIX: "stg"
+AZURE_LOCATION: "japaneast"
+RESOURCE_TYPE: "both"
+ADMIN_USERNAME: "azureuser"
+VM_SIZE: "Standard_B2s"
+APP_SERVICE_SKU_TIER: "Standard"
+APP_SERVICE_SKU_SIZE: "S1"
+```
+
+**Production環境:**
+```
+TF_VAR_PREFIX: "prod"
+AZURE_LOCATION: "japaneast"
+RESOURCE_TYPE: "both"
+ADMIN_USERNAME: "azureuser"
+VM_SIZE: "Standard_B4ms"
+APP_SERVICE_SKU_TIER: "Premium"
+APP_SERVICE_SKU_SIZE: "P1v2"
+```
 
 ### 5. Backend設定 (推奨)
 リモートステートを Azure Storage に保存する場合：
 
-**Variables に追加:**
+**Environment Variables に追加:**
 - `BACKEND_RESOURCE_GROUP_NAME`: バックエンド用リソースグループ名
 - `BACKEND_STORAGE_ACCOUNT_NAME`: バックエンド用ストレージアカウント名
 - `BACKEND_CONTAINER_NAME`: バックエンド用コンテナ名
 - `BACKEND_KEY`: ステートファイル名 (デフォルト: terraform.tfstate)
+
+## 環境分離の利点
+
+### 1. **セキュリティ向上**
+- 環境ごとのアクセス制御
+- 本番環境への直接アクセス防止
+- 環境固有の認証情報管理
+
+### 2. **リスク軽減**
+- ステージング環境での変更が本番に影響しない
+- 環境ごとの独立したテスト
+- 段階的なデプロイメント
+
+### 3. **運用の柔軟性**
+- 環境ごとに最適化されたリソースサイズ
+- 環境固有の設定値管理
+- ステージング・本番の分離
+
+### 4. **チーム協働の改善**
+- 環境ごとの責任分離
+- 並行開発の安全性確保
+- レビュープロセスの明確化
 
 ## ローカルでの使い方
 
@@ -144,7 +211,7 @@ terraform plan -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-### 2. GitHub Actions での自動化 (OIDC認証)
+### 2. GitHub Actions での自動化 (OIDC認証 + 環境分離)
 
 #### 認証方式: OpenID Connect (OIDC)
 - **セキュリティ**: 長期間有効なシークレットを使用せず、短時間のトークンで認証
@@ -156,6 +223,7 @@ terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
 #### Plan ワークフロー (`plan.yml`)
 - **トリガー**: プルリクエスト作成/更新時
+- **実行環境**: Staging
 - **実行内容**:
   - フォーマットチェック (`terraform fmt -check`)
   - バリデーション (`terraform validate`)
@@ -164,6 +232,7 @@ terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 - **PRコメント内容**:
   - PR番号とタイトル
   - ブランチ情報
+  - 環境情報（Staging）
   - リソースタイプ
   - 各チェックの結果（絵文字付き）
   - プランの詳細出力
@@ -171,12 +240,27 @@ terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
 #### Apply ワークフロー (`apply.yml`)
 - **トリガー**: mainブランチへのプッシュ時
+- **実行環境**: Staging
 - **実行内容**:
   - フォーマットチェック
   - バリデーション
   - プラン実行
   - 自動適用 (`terraform apply`)
 - **セキュリティ**: バックエンド使用時はステートロック機能で同時書き込みを防止
+
+#### Production Apply ワークフロー (`apply-production.yml`)
+- **トリガー**: 手動実行（workflow_dispatch）
+- **実行環境**: Production
+- **実行内容**:
+  - 事前チェック（承認確認）
+  - フォーマットチェック
+  - バリデーション
+  - プラン実行
+  - 手動承認後の適用 (`terraform apply`)
+- **セキュリティ**: 
+  - 手動承認プロセス必須
+  - 本番環境の厳格な制御
+  - 承認者による最終確認
 
 ### 3. ローカルでのTerraform実行
 
@@ -208,130 +292,196 @@ terraform plan -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.
 terraform apply -auto-approve -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-**詳細なバックエンド設定手順は `backend-setup.md` を参照してください。**
+## 環境分離の運用フロー
 
-### 4. プルリクエストの作成方法
-
-#### 基本的な手順
-```bash
-# 1. 新しいブランチを作成
-git checkout -b feature/add-app-service
-
-# 2. 変更をコミット
-git add .
-git commit -m "Add App Service module and configuration"
-
-# 3. ブランチをプッシュ
-git push origin feature/add-app-service
-
-# 4. GitHubでプルリクエストを作成
-# - ベースブランチ: main
-# - 比較ブランチ: feature/add-app-service
+### 1. **開発フロー**
+```
+開発者 → フィーチャーブランチ作成 → コード変更 → PR作成
+↓
+自動実行: Plan (Staging)
+↓
+レビュー → 承認 → マージ
+↓
+自動実行: Apply (Staging)
+↓
+ステージング環境でテスト
+↓
+本番環境への手動デプロイ（承認プロセス付き）
 ```
 
-#### プルリクエストのテンプレート
-```markdown
-## 変更内容
-- [ ] VMの設定変更
-- [ ] App Serviceの追加
-- [ ] ネットワーク設定の変更
-- [ ] その他
+### 2. **環境別の設定管理**
+- **Staging**: 本番相当のリソース、統合テスト
+- **Production**: 本番環境、本格運用
 
-## リソースタイプ
-- [ ] VM
-- [ ] App Service  
-- [ ] 両方
+### 3. **セキュリティ制御**
+- **Staging**: レビュアー以上アクセス可能
+- **Production**: 管理者のみアクセス可能、手動承認必須
 
-## テスト項目
-- [ ] ローカルでterraform plan実行済み
-- [ ] フォーマットチェック通過
-- [ ] バリデーション通過
+## 本番環境へのデプロイ方法
 
-## 関連Issue
-Closes #XXX
-```
+### ステージング完了後の本番デプロイ
 
-### 5. リソースタイプの選択
+#### **Step 1: ステージング環境の確認**
+1. ステージング環境でデプロイが完了
+2. ステージング環境でテストを実行
+3. すべての機能が正常に動作することを確認
 
-#### VM のみをデプロイ
-```bash
-# ローカル実行
-terraform apply -var="resource_type=vm"
+#### **Step 2: 本番環境へのデプロイ実行**
+1. **GitHub Actionsページに移動**
+   - リポジトリの `Actions` タブをクリック
 
-# GitHub Variables
-RESOURCE_TYPE=vm
-```
+2. **本番デプロイワークフローを選択**
+   - `Terraform Apply - Production` を選択
 
-#### App Service のみをデプロイ
-```bash
-# ローカル実行
-terraform apply -var="resource_type=appservice"
+3. **ワークフローを実行**
+   - `Run workflow` ボタンをクリック
 
-# GitHub Variables
-RESOURCE_TYPE=appservice
-```
+4. **承認パラメータを設定**
+   - `Confirm production deployment`: `true`
+   - `Staging environment has been verified and tested`: `true`
+   - `Reason for production deployment`: デプロイ理由を入力
 
-#### VM と App Service の両方をデプロイ
-```bash
-# ローカル実行
-terraform apply -var="resource_type=both"
+5. **デプロイ実行**
+   - `Run workflow` をクリックして実行
 
-# GitHub Variables
-RESOURCE_TYPE=both
-```
+#### **Step 3: 承認プロセス**
+1. **事前チェック**
+   - ステージング環境の確認
+   - デプロイ理由の確認
+   - 承認者の確認
 
+2. **Plan実行**
+   - 本番環境での変更内容確認
+   - リソース変更の詳細確認
 
+3. **Apply実行**
+   - 承認後の実際のデプロイ
+   - 本番環境への変更適用
 
-## バージョニング管理
+#### **Step 4: デプロイ後の確認**
+1. **リソースの確認**
+   - Azure Portalでリソースの状態確認
+   - アプリケーションの動作確認
 
-### 1. Terraformバージョン
-- `providers.tf`でTerraformとAzureRMプロバイダーのバージョンを固定
-- GitHub ActionsでTerraform 1.9.0を使用
+2. **監視とログ**
+   - アプリケーションログの確認
+   - パフォーマンスメトリクスの監視
 
-### 2. モジュールバージョン管理
-各モジュールにバージョンタグを付けて管理：
-```bash
-git tag -a v1.0.0 -m "Initial release"
-git push origin v1.0.0
-```
+3. **ドキュメント更新**
+   - デプロイ履歴の記録
+   - 設定変更の記録
 
-### 3. 同時書き込み防止
-- バックエンド使用時は自動的にステートロック機能が有効
-- GitHub Actionsで`-lock-timeout=5m`を設定
+### 承認プロセスの詳細
 
-## セキュリティ考慮事項
+#### **必須チェック項目**
+- [ ] ステージング環境でデプロイが完了
+- [ ] ステージング環境でテストが成功
+- [ ] 本番デプロイが承認されている
+- [ ] デプロイ理由が明確
 
-### 1. OIDC認証
-- サービスプリンシパルのシークレットを保存する必要がない
-- トークンベースの認証でより安全
-
-### 2. 最小権限の原則
-- 必要最小限の権限のみを付与
-- リソースグループレベルでの権限付与を推奨
-
-### 3. ネットワークセキュリティ
-- SSHポート(22)のみを開放
-- 必要に応じてソースIPアドレスを制限
+#### **セキュリティ制御**
+- **本番環境へのアクセス**: 管理者のみ
+- **承認プロセス**: 手動承認必須
+- **変更追跡**: デプロイ理由の記録
+- **監査ログ**: デプロイ履歴の保持
 
 ## トラブルシューティング
 
-### 1. OIDC認証エラー
-```bash
-# フェデレーション認証情報の確認
-az ad app federated-credential list --id <app-id>
+### よくある問題と解決方法
 
-# 権限の確認
-az role assignment list --assignee <app-id>
+#### 1. 環境変数が反映されない
+- **原因**: Environment Variablesの設定ミス
+- **解決**: GitHubリポジトリのSettingsで環境変数を確認
+
+#### 2. 権限エラーが発生する
+- **原因**: OIDC認証の設定不備
+- **解決**: Azure AD App Registrationの設定を確認
+
+#### 3. ワークフローが実行されない
+- **原因**: 環境の設定不備
+- **解決**: GitHub Environmentsの設定を確認
+
+#### 4. 本番環境へのデプロイができない
+- **原因**: 本番環境の承認プロセス
+- **解決**: 本番環境の承認者に連絡
+
+#### 5. ステージング完了後の本番デプロイが失敗する
+- **原因**: 承認パラメータの設定ミス
+- **解決**: すべての承認パラメータを `true` に設定
+
+## コスト管理機能
+
+### ステージング環境のコスト削減
+
+#### **自動管理機能**
+- **自動停止**: 平日夜8時にステージング環境を自動停止
+- **自動開始**: 平日朝8時にステージング環境を自動開始
+- **手動制御**: 必要に応じて手動で開始・停止・削除
+
+#### **管理オプション**
+
+##### **1. 停止 (Stop)**
+```yaml
+利点:
+- リソースは保持される
+- 再開が高速
+- データは保持される
+
+欠点:
+- 一部のコストは継続
+- ストレージコストは発生
 ```
 
-### 2. バックエンドエラー
-```bash
-# ストレージアカウントの確認
-az storage account show --name <storage-account-name> --resource-group <resource-group-name>
+##### **2. 削除 (Destroy)**
+```yaml
+利点:
+- 完全なコスト削減
+- リソースの完全削除
+- 最大のコスト効率
 
-# コンテナの確認
-az storage container list --account-name <storage-account-name>
+欠点:
+- 再作成に時間がかかる
+- データは失われる
+- 設定の再構築が必要
 ```
+
+#### **ワークフロー使用方法**
+
+##### **ステージング環境管理**
+1. **Actions** タブを開く
+2. **Manage Staging Environment** を選択
+3. **Run workflow** をクリック
+4. アクションを選択:
+   - `start`: 環境を開始
+   - `stop`: 環境を停止
+   - `destroy`: 環境を削除（確認必須）
+
+##### **ステージング環境再作成**
+ステージング環境を削除した後は、通常のデプロイワークフローを使用して再作成できます：
+1. **Actions** タブを開く
+2. **Terraform Apply** を選択
+3. **Run workflow** をクリック
+4. ステージング環境にデプロイされます
+
+#### **コスト比較**
+```yaml
+# ステージング環境（低コスト設定）
+VM_SIZE: "Standard_B2s"        # 約$0.05/時間
+APP_SERVICE_SKU_TIER: "Standard"  # 約$0.02/時間
+
+# 本番環境（高コスト設定）
+VM_SIZE: "Standard_B4ms"       # 約$0.20/時間
+APP_SERVICE_SKU_TIER: "Premium"   # 約$0.10/時間
+```
+
+## 今後の拡張予定
+
+- [ ] 環境別の通知設定
+- [ ] ロールバック機能の追加
+- [ ] 監査ログの強化
+- [ ] 自動テストの統合
+- [ ] コスト監視ダッシュボード
+- [ ] 自動スケーリング機能
 
 ## 参考リンク
 - [Terraform Azure Provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs)
