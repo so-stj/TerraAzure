@@ -2,6 +2,7 @@ name: Terraform Apply
 
 on:
   push:
+    types: [closed]
     branches:
       - main
     paths:
