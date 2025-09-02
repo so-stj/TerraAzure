@@ -1,16 +1,16 @@
-# Azure Storage Backend Setup Guide
+# Azure Storage Backend セットアップガイド
 
 **Languages: [English](backend-setup.md) | [日本語](backend-setup_ja.md)**
 
-## 1. Azure Storage Account Creation
+## 1. Azure Storage アカウントの作成
 
-### Using Azure CLI
+### Azure CLI を使用した作成
 
 ```bash
-# Create resource group (skip if using existing one)
+# リソースグループを作成（既存のものを使用する場合はスキップ）
 az group create --name tfstate-rg --location japaneast
 
-# Create storage account (name must be unique)
+# ストレージアカウントを作成（名前は一意である必要があります）
 az storage account create \
   --name tfstateaccount123 \
   --resource-group tfstate-rg \
@@ -18,35 +18,35 @@ az storage account create \
   --sku Standard_LRS \
   --encryption-services blob
 
-# Create Blob container
+# Blobコンテナを作成
 az storage container create \
   --name tfstate \
   --account-name tfstateaccount123
 
-# Get access keys
+# アクセスキーを取得
 az storage account keys list \
   --resource-group tfstate-rg \
   --account-name tfstateaccount123
 ```
 
-### Manual Creation
+### 手動での作成
 
-1. **Login to Azure Portal**
-2. **Create Storage Account**
-   - Resource Group: `tfstate-rg`
-   - Storage Account Name: `tfstateaccount123` (change to unique name)
-   - Location: `japaneast`
-   - Performance: `Standard`
-   - Redundancy: `LRS`
-3. **Create Blob Container**
-   - Name: `tfstate`
+1. **Azure Portal**にログイン
+2. **ストレージアカウント**を作成
+   - リソースグループ: `tfstate-rg`
+   - ストレージアカウント名: `tfstateaccount123`（一意の名前に変更）
+   - 場所: `japaneast`
+   - パフォーマンス: `Standard`
+   - 冗長性: `LRS`
+3. **Blobコンテナ**を作成
+   - 名前: `tfstate`
 
-## 2. Backend Configuration
+## 2. バックエンド設定
 
-### Method 1: Command Line Configuration
+### 方法1: コマンドラインで設定
 
 ```bash
-# Initialize with backend configuration
+# バックエンド設定で初期化
 terraform init \
   -backend-config="resource_group_name=tfstate-rg" \
   -backend-config="storage_account_name=tfstateaccount123" \
@@ -54,21 +54,21 @@ terraform init \
   -backend-config="key=terraform.tfstate"
 ```
 
-### Method 2: Environment Variables Configuration
+### 方法2: 環境変数で設定
 
 ```bash
-# Set environment variables
+# 環境変数を設定
 export ARM_ACCESS_KEY="your-storage-account-access-key"
 export TF_VAR_backend_resource_group_name="tfstate-rg"
 export TF_VAR_backend_storage_account_name="tfstateaccount123"
 export TF_VAR_backend_container_name="tfstate"
 export TF_VAR_backend_key="terraform.tfstate"
 
-# Initialize
+# 初期化
 terraform init
 ```
 
-### Method 3: Direct Description in providers.tf (Not Recommended)
+### 方法3: providers.tf に直接記述（非推奨）
 
 ```hcl
 terraform {
@@ -90,58 +90,58 @@ terraform {
 }
 ```
 
-## 3. Authentication Configuration
+## 3. 認証設定
 
-### Azure CLI Authentication (Recommended)
+### Azure CLI 認証（推奨）
 
 ```bash
-# Login with Azure CLI
+# Azure CLIでログイン
 az login
 
-# Set subscription
+# サブスクリプションを設定
 az account set --subscription "your-subscription-id"
 ```
 
-### Service Principal Authentication
+### サービスプリンシパル認証
 
 ```bash
-# Set environment variables
+# 環境変数を設定
 export ARM_CLIENT_ID="your-client-id"
 export ARM_CLIENT_SECRET="your-client-secret"
 export ARM_SUBSCRIPTION_ID="your-subscription-id"
 export ARM_TENANT_ID="your-tenant-id"
 ```
 
-## 4. Usage Examples
+## 4. 使用例
 
-### Basic Execution
+### 基本的な実行
 
 ```bash
-# Initialize (with backend configuration)
+# 初期化（バックエンド設定付き）
 terraform init \
   -backend-config="resource_group_name=tfstate-rg" \
   -backend-config="storage_account_name=tfstateaccount123" \
   -backend-config="container_name=tfstate" \
   -backend-config="key=terraform.tfstate"
 
-# Execute plan
+# プラン実行
 terraform plan -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
-# Apply
+# 適用
 terraform apply -auto-approve -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-### Using with Multiple Environments
+### 複数環境での使用
 
 ```bash
-# Development environment
+# 開発環境
 terraform init \
   -backend-config="resource_group_name=tfstate-rg" \
   -backend-config="storage_account_name=tfstateaccount123" \
   -backend-config="container_name=tfstate" \
   -backend-config="key=dev/terraform.tfstate"
 
-# Production environment
+# 本番環境
 terraform init \
   -backend-config="resource_group_name=tfstate-rg" \
   -backend-config="storage_account_name=tfstateaccount123" \
@@ -149,18 +149,18 @@ terraform init \
   -backend-config="key=prod/terraform.tfstate"
 ```
 
-## 5. Security Considerations
+## 5. セキュリティ考慮事項
 
-### Access Control
+### アクセス制御
 
 ```bash
-# Set storage account access control
+# ストレージアカウントのアクセス制御を設定
 az storage account update \
   --name tfstateaccount123 \
   --resource-group tfstate-rg \
   --enable-hierarchical-namespace true
 
-# Set private endpoint (optional)
+# プライベートエンドポイントを設定（オプション）
 az network private-endpoint create \
   --name tfstate-pe \
   --resource-group tfstate-rg \
@@ -171,30 +171,30 @@ az network private-endpoint create \
   --connection-name tfstate-connection
 ```
 
-### Encryption
+### 暗号化
 
-- Storage accounts are encrypted by default
-- Custom managed keys can also be used
+- ストレージアカウントはデフォルトで暗号化されます
+- カスタマーマネージドキーを使用することも可能です
 
-## 6. Troubleshooting
+## 6. トラブルシューティング
 
-### Common Issues
+### よくある問題
 
-1. **Access Permission Error**
+1. **アクセス権限エラー**
    ```bash
-   # Check storage account access keys
+   # ストレージアカウントのアクセスキーを確認
    az storage account keys list --resource-group tfstate-rg --account-name tfstateaccount123
    ```
 
-2. **Container Does Not Exist**
+2. **コンテナが存在しない**
    ```bash
-   # Create container
+   # コンテナを作成
    az storage container create --name tfstate --account-name tfstateaccount123
    ```
 
-3. **Authentication Error**
+3. **認証エラー**
    ```bash
-   # Login with Azure CLI
+   # Azure CLIでログイン
    az login
    az account set --subscription "your-subscription-id"
    ```
