@@ -1,141 +1,143 @@
-# Terraform + GitHub Actions for Azure VM (モジュール化 + OIDC + 環境分離)
+# Terraform + GitHub Actions for Azure VM (Modularized + OIDC + Environment Separation)
 
-このリポジトリは、Terraform と GitHub Actions を使用して Azure の仮想マシン (Ubuntu 22.04 LTS) を自動デプロイするモジュール化された構成です。**ステージングから本番環境への分離**に対応しており、安全で段階的なデプロイメントを実現します。
+**Languages: [English](README.md) | [日本語](README_ja.md)**
 
-## 構成
-- `providers.tf`: Provider と Backend 設定
-- `variables.tf`: 変数定義
-- `main.tf`: メインリソース定義 (Resource Group + 条件付きモジュール呼び出し)
-- `outputs.tf`: 出力値
-- `modules/network/`: ネットワークリソースモジュール (VM用)
-- `modules/vm/`: 仮想マシンモジュール
-- `modules/appservice/`: App Serviceモジュール
-- `.github/workflows/plan.yml`: Plan ワークフロー (ステージング環境)
-- `.github/workflows/apply.yml`: Apply ワークフロー (ステージング環境)
-- `.github/workflows/apply-production.yml`: Apply ワークフロー (本番環境)
-- `.github/workflows/manage-staging.yml`: ステージング環境管理ワークフロー (開始/停止/削除)
+This repository provides a modularized configuration using Terraform and GitHub Actions to automatically deploy Azure virtual machines (Ubuntu 22.04 LTS). It supports **separation from staging to production environments**, enabling safe and gradual deployment.
 
-## 環境分離アーキテクチャ
+## Configuration
+- `providers.tf`: Provider and Backend configuration
+- `variables.tf`: Variable definitions
+- `main.tf`: Main resource definitions (Resource Group + conditional module calls)
+- `outputs.tf`: Output values
+- `modules/network/`: Network resource module (for VM)
+- `modules/vm/`: Virtual machine module
+- `modules/appservice/`: App Service module
+- `.github/workflows/plan.yml`: Plan workflow (staging environment)
+- `.github/workflows/apply.yml`: Apply workflow (staging environment)
+- `.github/workflows/apply-production.yml`: Apply workflow (production environment)
+- `.github/workflows/manage-staging.yml`: Staging environment management workflow (start/stop/destroy)
 
-### 対応環境
-- **Staging**: ステージング環境（本番相当のテスト）
-- **Production**: 本番環境（本格運用）
+## Environment Separation Architecture
 
-### ワークフロー構成
+### Supported Environments
+- **Staging**: Staging environment (production-equivalent testing)
+- **Production**: Production environment (full operation)
+
+### Workflow Configuration
 ```
-PR作成 → Plan (Staging) → レビュー → マージ → Apply (Staging) → テスト → 本番デプロイ
-```
-
-### デプロイメントフロー
-```
-1. 開発者 → フィーチャーブランチ作成 → コード変更
-2. PR作成 → 自動的にステージング環境でPlan実行
-3. レビュー → 承認 → マージ
-4. 自動的にステージング環境でApply実行
-5. ステージング環境でテスト
-6. 本番環境への手動デプロイ（承認プロセス付き）
+PR Creation → Plan (Staging) → Review → Merge → Apply (Staging) → Testing → Production Deployment
 ```
 
-## モジュール構成
+### Deployment Flow
+```
+1. Developer → Create feature branch → Code changes
+2. PR Creation → Automatically execute Plan in staging environment
+3. Review → Approval → Merge
+4. Automatically execute Apply in staging environment
+5. Testing in staging environment
+6. Manual deployment to production environment (with approval process)
+```
+
+## Module Configuration
 ```
 modules/
 ├── network/
-│   ├── main.tf      # VNet, Subnet, Public IP, NSG, NIC (VM用)
-│   ├── variables.tf # ネットワークモジュール変数
-│   └── outputs.tf   # ネットワークモジュール出力
+│   ├── main.tf      # VNet, Subnet, Public IP, NSG, NIC (for VM)
+│   ├── variables.tf # Network module variables
+│   └── outputs.tf   # Network module outputs
 ├── vm/
 │   ├── main.tf      # Linux VM
-│   ├── variables.tf # VMモジュール変数
-│   └── outputs.tf   # VMモジュール出力
+│   ├── variables.tf # VM module variables
+│   └── outputs.tf   # VM module outputs
 └── appservice/
     ├── main.tf      # App Service Plan & App Service
-    ├── variables.tf # App Serviceモジュール変数
-    └── outputs.tf   # App Serviceモジュール出力
+    ├── variables.tf # App Service module variables
+    └── outputs.tf   # App Service module outputs
 ```
 
-## 事前準備
+## Prerequisites
 
-### 1. Azure サブスクリプション
-- Azure サブスクリプションが必要です
+### 1. Azure Subscription
+- Azure subscription is required
 
-### 2. OIDC認証の設定
-GitHub ActionsでOIDC認証を使用するため、Azure ADアプリケーションとフェデレーション認証情報を作成します：
+### 2. OIDC Authentication Setup
+To use OIDC authentication with GitHub Actions, create an Azure AD application and federation credentials:
 
 ```bash
-# 1. Azure ADアプリケーションを作成
+# 1. Create Azure AD application
 az ad app create --display-name "github-actions-terraform"
 
-# 2. サービスプリンシパルを作成
+# 2. Create service principal
 az ad sp create --id <app-id>
 
-# 3. フェデレーション認証情報を作成
+# 3. Create federation credentials
 az ad app federated-credential create \
   --id <app-id> \
   --parameters "{\"name\":\"github-actions\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:<your-github-username>/<your-repo-name>:ref:refs/heads/main\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
 
-# 4. 必要な権限を付与
+# 4. Grant necessary permissions
 az role assignment create \
   --assignee <app-id> \
   --role "Contributor" \
   --scope /subscriptions/<subscription-id>
 ```
 
-### 3. OIDC認証設定
+### 3. OIDC Authentication Configuration
 
-#### Azure AD App Registration の作成
+#### Azure AD App Registration Creation
 ```bash
-# Azure CLIでログイン
+# Login with Azure CLI
 az login
 
-# App Registration を作成
+# Create App Registration
 az ad app create --display-name "GitHub Actions Terraform"
 
-# アプリケーションIDを取得
+# Get application ID
 APP_ID=$(az ad app list --display-name "GitHub Actions Terraform" --query "[].appId" -o tsv)
 echo "App ID: $APP_ID"
 
-# サービスプリンシパルを作成
+# Create service principal
 az ad sp create --id $APP_ID
 
-# サービスプリンシパルIDを取得
+# Get service principal ID
 SP_ID=$(az ad sp list --display-name "GitHub Actions Terraform" --query "[].id" -o tsv)
 echo "Service Principal ID: $SP_ID"
 ```
 
-#### フェデレーション認証情報の設定
+#### Federation Credentials Configuration
 ```bash
-# GitHub Actions の OIDC トークン発行者を設定
+# Set GitHub Actions OIDC token issuer
 az ad app federated-credential create \
   --id $APP_ID \
   --parameters "{\"name\":\"github-actions\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"repo:YOUR_GITHUB_USERNAME/YOUR_REPO_NAME:ref:refs/heads/main\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
 
-# リソースグループへの権限を付与
+# Grant permissions to resource group
 az role assignment create \
   --assignee $SP_ID \
   --role "Contributor" \
   --scope "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/YOUR_RESOURCE_GROUP_NAME"
 ```
 
-### 4. GitHub リポジトリ設定
+### 4. GitHub Repository Configuration
 
-#### 4.1. 環境の作成
-1. GitHubリポジトリの `Settings` → `Environments` に移動
-2. `New environment` で以下の環境を作成：
+#### 4.1. Environment Creation
+1. Go to GitHub repository `Settings` → `Environments`
+2. Create the following environments with `New environment`:
    - `staging`
    - `production`
 
-#### 4.2. Secrets設定
-リポジトリの Settings → Secrets and variables → Actions に以下を登録：
+#### 4.2. Secrets Configuration
+Register the following in repository Settings → Secrets and variables → Actions:
 
 **Secrets:**
-- `AZURE_CLIENT_ID`: Azure ADアプリケーションのクライアントID
-- `AZURE_TENANT_ID`: Azure ADテナントID
-- `AZURE_SUBSCRIPTION_ID`: Azure サブスクリプションID
-- `SSH_PUBLIC_KEY`: VMに登録するSSH公開鍵
+- `AZURE_CLIENT_ID`: Azure AD application client ID
+- `AZURE_TENANT_ID`: Azure AD tenant ID
+- `AZURE_SUBSCRIPTION_ID`: Azure subscription ID
+- `SSH_PUBLIC_KEY`: SSH public key to register with VM
 
-#### 4.3. Environment Variables設定
+#### 4.3. Environment Variables Configuration
 
-**Staging環境:**
+**Staging Environment:**
 ```
 TF_VAR_PREFIX: "stg"
 AZURE_LOCATION: "japaneast"
@@ -146,7 +148,7 @@ APP_SERVICE_SKU_TIER: "Standard"
 APP_SERVICE_SKU_SIZE: "S1"
 ```
 
-**Production環境:**
+**Production Environment:**
 ```
 TF_VAR_PREFIX: "prod"
 AZURE_LOCATION: "japaneast"
@@ -157,341 +159,339 @@ APP_SERVICE_SKU_TIER: "Premium"
 APP_SERVICE_SKU_SIZE: "P1v2"
 ```
 
-### 5. Backend設定 (推奨)
-リモートステートを Azure Storage に保存する場合：
+### 5. Backend Configuration (Recommended)
+When storing remote state in Azure Storage:
 
-**Environment Variables に追加:**
-- `BACKEND_RESOURCE_GROUP_NAME`: バックエンド用リソースグループ名
-- `BACKEND_STORAGE_ACCOUNT_NAME`: バックエンド用ストレージアカウント名
-- `BACKEND_CONTAINER_NAME`: バックエンド用コンテナ名
-- `BACKEND_KEY`: ステートファイル名 (デフォルト: terraform.tfstate)
+**Add to Environment Variables:**
+- `BACKEND_RESOURCE_GROUP_NAME`: Backend resource group name
+- `BACKEND_STORAGE_ACCOUNT_NAME`: Backend storage account name
+- `BACKEND_CONTAINER_NAME`: Backend container name
+- `BACKEND_KEY`: State file name (default: terraform.tfstate)
 
-## 環境分離の利点
+## Benefits of Environment Separation
 
-### 1. **セキュリティ向上**
-- 環境ごとのアクセス制御
-- 本番環境への直接アクセス防止
-- 環境固有の認証情報管理
+### 1. **Enhanced Security**
+- Access control per environment
+- Prevention of direct access to production environment
+- Environment-specific credential management
 
-### 2. **リスク軽減**
-- ステージング環境での変更が本番に影響しない
-- 環境ごとの独立したテスト
-- 段階的なデプロイメント
+### 2. **Risk Reduction**
+- Changes in staging environment don't affect production
+- Independent testing per environment
+- Gradual deployment
 
-### 3. **運用の柔軟性**
-- 環境ごとに最適化されたリソースサイズ
-- 環境固有の設定値管理
-- ステージング・本番の分離
+### 3. **Operational Flexibility**
+- Resource size optimization per environment
+- Environment-specific configuration value management
+- Staging and production separation
 
-### 4. **チーム協働の改善**
-- 環境ごとの責任分離
-- 並行開発の安全性確保
-- レビュープロセスの明確化
+### 4. **Improved Team Collaboration**
+- Responsibility separation per environment
+- Safe parallel development
+- Clear review process
 
-## ローカルでの使い方
+## Local Usage
 
-### 1. 認証設定
+### 1. Authentication Configuration
 ```bash
-# Azure CLIでログイン
+# Login with Azure CLI
 az login
 
-# または、環境変数で認証情報を設定
+# Or set authentication credentials with environment variables
 export ARM_CLIENT_ID="your-client-id"
 export ARM_CLIENT_SECRET="your-client-secret"
 export ARM_SUBSCRIPTION_ID="your-subscription-id"
 export ARM_TENANT_ID="your-tenant-id"
 
-# 初期化
+# Initialize
 terraform init
 
-# プラン実行
+# Execute plan
 terraform plan -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
-# 適用
+# Apply
 terraform apply -auto-approve -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-### 2. GitHub Actions での自動化 (OIDC認証 + 環境分離)
+### 2. GitHub Actions Automation (OIDC Authentication + Environment Separation)
 
-#### 認証方式: OpenID Connect (OIDC)
-- **セキュリティ**: 長期間有効なシークレットを使用せず、短時間のトークンで認証
-- **利点**: 
-  - シークレット管理が不要
-  - 自動的なトークン更新
-  - より高いセキュリティレベル
-- **設定**: Azure AD App Registration と GitHub Actions の連携
+#### Authentication Method: OpenID Connect (OIDC)
+- **Security**: No long-term secrets, authentication with short-term tokens
+- **Benefits**: 
+  - No secret management required
+  - Automatic token renewal
+  - Higher security level
+- **Configuration**: Azure AD App Registration integration with GitHub Actions
 
-#### Plan ワークフロー (`plan.yml`)
-- **トリガー**: プルリクエスト作成/更新時
-- **実行環境**: Staging
-- **実行内容**:
-  - フォーマットチェック (`terraform fmt -check`)
-  - バリデーション (`terraform validate`)
-  - プラン実行 (`terraform plan`)
-  - 結果をPRにコメント投稿
-- **PRコメント内容**:
-  - PR番号とタイトル
-  - ブランチ情報
-  - 環境情報（Staging）
-  - リソースタイプ
-  - 各チェックの結果（絵文字付き）
-  - プランの詳細出力
-  - 次のステップの説明
+#### Plan Workflow (`plan.yml`)
+- **Trigger**: Pull request creation/update
+- **Execution Environment**: Staging
+- **Execution Content**:
+  - Format check (`terraform fmt -check`)
+  - Validation (`terraform validate`)
+  - Plan execution (`terraform plan`)
+  - Post results as PR comments
+- **PR Comment Content**:
+  - PR number and title
+  - Branch information
+  - Environment information (Staging)
+  - Resource type
+  - Results of each check (with emojis)
+  - Detailed plan output
+  - Next steps explanation
 
-#### Apply ワークフロー (`apply.yml`)
-- **トリガー**: mainブランチへのプッシュ時
-- **実行環境**: Staging
-- **実行内容**:
-  - フォーマットチェック
-  - バリデーション
-  - プラン実行
-  - 自動適用 (`terraform apply`)
-- **セキュリティ**: バックエンド使用時はステートロック機能で同時書き込みを防止
+#### Apply Workflow (`apply.yml`)
+- **Trigger**: Push to main branch
+- **Execution Environment**: Staging
+- **Execution Content**:
+  - Format check
+  - Validation
+  - Plan execution
+  - Automatic application (`terraform apply`)
+- **Security**: State lock functionality prevents simultaneous writes when using backend
 
-#### Production Apply ワークフロー (`apply-production.yml`)
-- **トリガー**: 手動実行（workflow_dispatch）
-- **実行環境**: Production
-- **実行内容**:
-  - 事前チェック（承認確認）
-  - フォーマットチェック
-  - バリデーション
-  - プラン実行
-  - 手動承認後の適用 (`terraform apply`)
-- **セキュリティ**: 
-  - 手動承認プロセス必須
-  - 本番環境の厳格な制御
-  - 承認者による最終確認
+#### Production Apply Workflow (`apply-production.yml`)
+- **Trigger**: Manual execution (workflow_dispatch)
+- **Execution Environment**: Production
+- **Execution Content**:
+  - Pre-check (approval confirmation)
+  - Format check
+  - Validation
+  - Plan execution
+  - Application after manual approval (`terraform apply`)
+- **Security**: 
+  - Manual approval process required
+  - Strict production environment control
+  - Final confirmation by approver
 
-### 3. ローカルでのTerraform実行
+### 3. Local Terraform Execution
 
-#### 基本的な実行手順（ローカルステート）
+#### Basic Execution Steps (Local State)
 ```bash
-# 初期化
+# Initialize
 terraform init
 
-# プラン実行
+# Execute plan
 terraform plan -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
-# 適用
+# Apply
 terraform apply -auto-approve -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-#### バックエンド使用時の実行手順
+#### Execution Steps When Using Backend
 ```bash
-# 初期化（バックエンド設定付き）
+# Initialize (with backend configuration)
 terraform init \
   -backend-config="resource_group_name=tfstate-rg" \
   -backend-config="storage_account_name=tfstateaccount123" \
   -backend-config="container_name=tfstate" \
   -backend-config="key=terraform.tfstate"
 
-# プラン実行
+# Execute plan
 terraform plan -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 
-# 適用
+# Apply
 terraform apply -auto-approve -var="resource_type=vm" -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
 ```
 
-## 環境分離の運用フロー
+## Environment Separation Operational Flow
 
-### 1. **開発フロー**
+### 1. **Development Flow**
 ```
-開発者 → フィーチャーブランチ作成 → コード変更 → PR作成
+Developer → Create feature branch → Code changes → Create PR
 ↓
-自動実行: Plan (Staging)
+Auto-execution: Plan (Staging)
 ↓
-レビュー → 承認 → マージ
+Review → Approval → Merge
 ↓
-自動実行: Apply (Staging)
+Auto-execution: Apply (Staging)
 ↓
-ステージング環境でテスト
+Testing in staging environment
 ↓
-本番環境への手動デプロイ（承認プロセス付き）
+Manual deployment to production environment (with approval process)
 ```
 
-### 2. **環境別の設定管理**
-- **Staging**: 本番相当のリソース、統合テスト
-- **Production**: 本番環境、本格運用
+### 2. **Environment-Specific Configuration Management**
+- **Staging**: Production-equivalent resources, integration testing
+- **Production**: Production environment, full operation
 
-### 3. **セキュリティ制御**
-- **Staging**: レビュアー以上アクセス可能
-- **Production**: 管理者のみアクセス可能、手動承認必須
+### 3. **Security Control**
+- **Staging**: Accessible by reviewers and above
+- **Production**: Accessible only by administrators, manual approval required
 
-## 本番環境へのデプロイ方法
+## Production Environment Deployment Method
 
-### ステージング完了後の本番デプロイ
+### Production Deployment After Staging Completion
 
-#### **Step 1: ステージング環境の確認**
-1. ステージング環境でデプロイが完了
-2. ステージング環境でテストを実行
-3. すべての機能が正常に動作することを確認
+#### **Step 1: Staging Environment Verification**
+1. Deployment completed in staging environment
+2. Execute testing in staging environment
+3. Confirm all functions work normally
 
-#### **Step 2: 本番環境へのデプロイ実行**
-1. **GitHub Actionsページに移動**
-   - リポジトリの `Actions` タブをクリック
+#### **Step 2: Execute Production Deployment**
+1. **Navigate to GitHub Actions page**
+   - Click `Actions` tab in repository
 
-2. **本番デプロイワークフローを選択**
-   - `Terraform Apply - Production` を選択
+2. **Select Production Deployment Workflow**
+   - Select `Terraform Apply - Production`
 
-3. **ワークフローを実行**
-   - `Run workflow` ボタンをクリック
+3. **Execute Workflow**
+   - Click `Run workflow` button
 
-4. **承認パラメータを設定**
+4. **Set Approval Parameters**
    - `Confirm production deployment`: `true`
    - `Staging environment has been verified and tested`: `true`
-   - `Reason for production deployment`: デプロイ理由を入力
+   - `Reason for production deployment`: Enter deployment reason
 
-5. **デプロイ実行**
-   - `Run workflow` をクリックして実行
+5. **Execute Deployment**
+   - Click `Run workflow` to execute
 
-#### **Step 3: 承認プロセス**
-1. **事前チェック**
-   - ステージング環境の確認
-   - デプロイ理由の確認
-   - 承認者の確認
+#### **Step 3: Approval Process**
+1. **Pre-check**
+   - Staging environment verification
+   - Deployment reason confirmation
+   - Approver confirmation
 
-2. **Plan実行**
-   - 本番環境での変更内容確認
-   - リソース変更の詳細確認
+2. **Plan Execution**
+   - Change content confirmation in production environment
+   - Detailed resource change confirmation
 
-3. **Apply実行**
-   - 承認後の実際のデプロイ
-   - 本番環境への変更適用
+3. **Apply Execution**
+   - Actual deployment after approval
+   - Change application to production environment
 
-#### **Step 4: デプロイ後の確認**
-1. **リソースの確認**
-   - Azure Portalでリソースの状態確認
-   - アプリケーションの動作確認
+#### **Step 4: Post-Deployment Verification**
+1. **Resource Verification**
+   - Resource status confirmation in Azure Portal
+   - Application operation confirmation
 
-2. **監視とログ**
-   - アプリケーションログの確認
-   - パフォーマンスメトリクスの監視
+2. **Monitoring and Logs**
+   - Application log confirmation
+   - Performance metrics monitoring
 
-3. **ドキュメント更新**
-   - デプロイ履歴の記録
-   - 設定変更の記録
+3. **Documentation Update**
+   - Deployment history recording
+   - Configuration change recording
 
-### 承認プロセスの詳細
+### Approval Process Details
 
-#### **必須チェック項目**
-- [ ] ステージング環境でデプロイが完了
-- [ ] ステージング環境でテストが成功
-- [ ] 本番デプロイが承認されている
-- [ ] デプロイ理由が明確
+#### **Required Check Items**
+- [ ] Deployment completed in staging environment
+- [ ] Testing successful in staging environment
+- [ ] Production deployment approved
+- [ ] Deployment reason clear
 
-#### **セキュリティ制御**
-- **本番環境へのアクセス**: 管理者のみ
-- **承認プロセス**: 手動承認必須
-- **変更追跡**: デプロイ理由の記録
-- **監査ログ**: デプロイ履歴の保持
+#### **Security Control**
+- **Production Environment Access**: Administrators only
+- **Approval Process**: Manual approval required
+- **Change Tracking**: Deployment reason recording
+- **Audit Logs**: Deployment history retention
 
-## トラブルシューティング
+## Troubleshooting
 
-### よくある問題と解決方法
+### Common Issues and Solutions
 
-#### 1. 環境変数が反映されない
-- **原因**: Environment Variablesの設定ミス
-- **解決**: GitHubリポジトリのSettingsで環境変数を確認
+#### 1. Environment Variables Not Reflected
+- **Cause**: Environment Variables configuration error
+- **Solution**: Check environment variables in GitHub repository Settings
 
-#### 2. 権限エラーが発生する
-- **原因**: OIDC認証の設定不備
-- **解決**: Azure AD App Registrationの設定を確認
+#### 2. Permission Error Occurs
+- **Cause**: OIDC authentication configuration issue
+- **Solution**: Check Azure AD App Registration configuration
 
-#### 3. ワークフローが実行されない
-- **原因**: 環境の設定不備
-- **解決**: GitHub Environmentsの設定を確認
+#### 3. Workflow Not Executing
+- **Cause**: Environment configuration issue
+- **Solution**: Check GitHub Environments configuration
 
-#### 4. 本番環境へのデプロイができない
-- **原因**: 本番環境の承認プロセス
-- **解決**: 本番環境の承認者に連絡
+#### 4. Cannot Deploy to Production Environment
+- **Cause**: Production environment approval process
+- **Solution**: Contact production environment approver
 
-#### 5. ステージング完了後の本番デプロイが失敗する
-- **原因**: 承認パラメータの設定ミス
-- **解決**: すべての承認パラメータを `true` に設定
+#### 5. Production Deployment Fails After Staging Completion
+- **Cause**: Approval parameter configuration error
+- **Solution**: Set all approval parameters to `true`
 
-## コスト管理機能
+## Cost Management Features
 
-### ステージング環境のコスト削減
+### Staging Environment Cost Reduction
 
-#### **自動管理機能**
-- **自動停止**: 平日夜8時にステージング環境を自動停止
-- **自動開始**: 平日朝8時にステージング環境を自動開始
-- **手動制御**: 必要に応じて手動で開始・停止・削除
+#### **Automatic Management Features**
+- **Auto-stop**: Automatically stop staging environment at 8 PM on weekdays
+- **Auto-start**: Automatically start staging environment at 8 AM on weekdays
+- **Manual Control**: Start/stop/destroy manually as needed
 
-#### **管理オプション**
+#### **Management Options**
 
-##### **1. 停止 (Stop)**
+##### **1. Stop**
 ```yaml
-利点:
-- リソースは保持される
-- 再開が高速
-- データは保持される
+Benefits:
+- Resources are retained
+- Fast restart
+- Data is retained
 
-欠点:
-- 一部のコストは継続
-- ストレージコストは発生
+Drawbacks:
+- Some costs continue
+- Storage costs occur
 ```
 
-##### **2. 削除 (Destroy)**
+##### **2. Destroy**
 ```yaml
-利点:
-- 完全なコスト削減
-- リソースの完全削除
-- 最大のコスト効率
+Benefits:
+- Complete cost reduction
+- Complete resource removal
+- Maximum cost efficiency
 
-欠点:
-- 再作成に時間がかかる
-- データは失われる
-- 設定の再構築が必要
+Drawbacks:
+- Time-consuming recreation
+- Data is lost
+- Configuration rebuild required
 ```
 
-#### **ワークフロー使用方法**
+#### **Workflow Usage Method**
 
-##### **ステージング環境管理**
-1. **Actions** タブを開く
-2. **Manage Staging Environment** を選択
-3. **Run workflow** をクリック
-4. アクションを選択:
-   - `start`: 環境を開始
-   - `stop`: 環境を停止
-   - `destroy`: 環境を削除（確認必須）
+##### **Staging Environment Management**
+1. Open **Actions** tab
+2. Select **Manage Staging Environment**
+3. Click **Run workflow**
+4. Select action:
+   - `start`: Start environment
+   - `stop`: Stop environment
+   - `destroy`: Destroy environment (confirmation required)
 
-##### **ステージング環境再作成**
-ステージング環境を削除した後は、通常のデプロイワークフローを使用して再作成できます：
-1. **Actions** タブを開く
-2. **Terraform Apply** を選択
-3. **Run workflow** をクリック
-4. ステージング環境にデプロイされます
+##### **Staging Environment Recreation**
+After destroying staging environment, recreate using normal deployment workflow:
+1. Open **Actions** tab
+2. Select **Terraform Apply**
+3. Click **Run workflow**
+4. Deploy to staging environment
 
-#### **コスト比較**
+#### **Cost Comparison**
 ```yaml
-# ステージング環境（低コスト設定）
-VM_SIZE: "Standard_B2s"        # 約$0.05/時間
-APP_SERVICE_SKU_TIER: "Standard"  # 約$0.02/時間
+# Staging Environment (Low-cost configuration)
+VM_SIZE: "Standard_B2s"        # ~$0.05/hour
+APP_SERVICE_SKU_TIER: "Standard"  # ~$0.02/hour
 
-# 本番環境（高コスト設定）
-VM_SIZE: "Standard_B4ms"       # 約$0.20/時間
-APP_SERVICE_SKU_TIER: "Premium"   # 約$0.10/時間
+# Production Environment (High-cost configuration)
+VM_SIZE: "Standard_B4ms"       # ~$0.20/hour
+APP_SERVICE_SKU_TIER: "Premium"   # ~$0.10/hour
 ```
 
-## 今後の拡張予定
+## Future Expansion Plans
 
-- [ ] 環境別の通知設定
-- [ ] ロールバック機能の追加
-- [ ] 監査ログの強化
-- [ ] 自動テストの統合
-- [ ] コスト監視ダッシュボード
-- [ ] 自動スケーリング機能
+- [ ] Environment-specific notification settings
+- [ ] Rollback functionality addition
+- [ ] Audit log enhancement
+- [ ] Automated testing integration
+- [ ] Cost monitoring dashboard
+- [ ] Auto-scaling functionality
 
-## 参考リンク
+## Reference Links
 - [Terraform Azure Provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs)
 - [GitHub Actions Azure Login](https://github.com/marketplace/actions/azure-login)
 - [Azure AD OIDC with GitHub Actions](https://docs.microsoft.com/en-us/azure/developer/github/connect-from-azure)
 - [Azure App Service Documentation](https://docs.microsoft.com/en-us/azure/app-service/)
 - [Terraform App Service Examples](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/app_service)
 
-
-
-## バージョン情報
+## Version Information
 - **Terraform**: 1.9.0
 - **AzureRM Provider**: ~> 4.40.0
