@@ -1,6 +1,6 @@
 # Terraform + GitHub Actions for Azure VM (Modularized + OIDC + Environment Separation)
 
-**Languages: [English](README.md) | [日本語](README_ja.md)**
+**Languages: [日本語](README_ja.md)**
 
 This repository provides a modularized configuration using Terraform and GitHub Actions to automatically deploy Azure virtual machines (Ubuntu 22.04 LTS). It supports **separation from staging to production environments**, enabling safe and gradual deployment.
 
