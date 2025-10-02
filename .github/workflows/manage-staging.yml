@@ -1,10 +1,6 @@
 name: Manage Staging Environment
 
 on:
-  schedule:
-    # 平日の朝8時に開始、夜8時に停止
-    - cron: '0 8 * * 1-5'  # 平日朝8時
-    - cron: '0 20 * * 1-5' # 平日夜8時
   workflow_dispatch:
     inputs:
       action:
